@@ -19,7 +19,7 @@
 #include "rk_mpi_vo.h"
 #include "rk_mpi_vpss.h"
 
-static bool quit = false;
+static volatile sig_atomic_t quit = 0;
 static	int ViWidth = 2304;
 static	int ViHeight = 1296;
 static	int VoWidth = 720;
@@ -34,6 +34,9 @@ static	int VoRotationDegrees = 180;
 static	ROTATION_E VoRotation = ROTATION_180;
 static const char *IqFileDir = "/oem/usr/share/iqfiles";
 static rk_aiq_sys_ctx_t *g_aiq_ctx;
+
+/* Never wait forever in the forwarding thread: shutdown must be able to join it. */
+static const RK_S32 FrameWaitTimeMs = 200;
 
 static RK_U64 get_monotonic_time_us(void) {
 	struct timespec time = {0, 0};
@@ -113,7 +116,6 @@ static void isp_deinit(void) {
 static void *GetMediaBuffer0(void *arg) {
 	printf("========%s========\n", __func__);
 	int s32Ret;
-	RK_S32 waitTime = 1000;
 	int pipeId = 0;
 	VIDEO_FRAME_INFO_S stViFrame;
 	VIDEO_FRAME_INFO_S stVpssFrame;
@@ -124,9 +126,11 @@ static void *GetMediaBuffer0(void *arg) {
 	RK_U32 latency_count = 0;
 
 	while (!quit) {
-		s32Ret = RK_MPI_VI_GetChnFrame(pipeId, s32chnlId, &stViFrame, waitTime);
+		s32Ret = RK_MPI_VI_GetChnFrame(pipeId, s32chnlId, &stViFrame,
+						       FrameWaitTimeMs);
 		if (s32Ret == RK_SUCCESS) {
-			int send_ret = RK_MPI_VPSS_SendFrame(VpssGrp, 0, &stViFrame, -1);
+			int send_ret = RK_MPI_VPSS_SendFrame(VpssGrp, 0, &stViFrame,
+							       FrameWaitTimeMs);
 			s32Ret = RK_MPI_VI_ReleaseChnFrame(pipeId, s32chnlId, &stViFrame);
 			if (s32Ret != RK_SUCCESS) {
 				RK_LOGE("RK_MPI_VI_ReleaseChnFrame fail %x", s32Ret);
@@ -136,7 +140,8 @@ static void *GetMediaBuffer0(void *arg) {
 				continue;
 			}
 
-			s32Ret = RK_MPI_VPSS_GetChnFrame(VpssGrp, VpssChn, &stVpssFrame, waitTime);
+			s32Ret = RK_MPI_VPSS_GetChnFrame(VpssGrp, VpssChn, &stVpssFrame,
+								      FrameWaitTimeMs);
 			if (s32Ret != RK_SUCCESS) {
 				RK_LOGE("RK_MPI_VPSS_GetChnFrame timeout %x", s32Ret);
 				continue;
@@ -171,13 +176,14 @@ static void *GetMediaBuffer0(void *arg) {
 				latency_count = 0;
 			}
 
-			s32Ret = RK_MPI_VO_SendFrame(VoLayer, VoChn, &stVpssFrame, -1);
-			if (s32Ret != RK_SUCCESS)
+			s32Ret = RK_MPI_VO_SendFrame(VoLayer, VoChn, &stVpssFrame,
+							  FrameWaitTimeMs);
+			if (s32Ret != RK_SUCCESS && !quit)
 				RK_LOGE("RK_MPI_VO_SendFrame fail %x", s32Ret);
 			s32Ret = RK_MPI_VPSS_ReleaseChnFrame(VpssGrp, VpssChn, &stVpssFrame);
 			if (s32Ret != RK_SUCCESS)
 				RK_LOGE("RK_MPI_VPSS_ReleaseChnFrame fail %x", s32Ret);
-		} else {
+		} else if (!quit) {
 			RK_LOGE("RK_MPI_VI_GetChnFrame timeout %x", s32Ret);
 		}
 	}
@@ -262,9 +268,17 @@ failed_destroy_grp:
 }
 
 static void vpss_deinit(void) {
-	RK_MPI_VPSS_StopGrp(VpssGrp);
-	RK_MPI_VPSS_DisableChn(VpssGrp, VpssChn);
-	RK_MPI_VPSS_DestroyGrp(VpssGrp);
+	int ret;
+
+	ret = RK_MPI_VPSS_StopGrp(VpssGrp);
+	if (ret != RK_SUCCESS)
+		RK_LOGE("RK_MPI_VPSS_StopGrp failed, ret = %x", ret);
+	ret = RK_MPI_VPSS_DisableChn(VpssGrp, VpssChn);
+	if (ret != RK_SUCCESS)
+		RK_LOGE("RK_MPI_VPSS_DisableChn failed, ret = %x", ret);
+	ret = RK_MPI_VPSS_DestroyGrp(VpssGrp);
+	if (ret != RK_SUCCESS)
+		RK_LOGE("RK_MPI_VPSS_DestroyGrp failed, ret = %x", ret);
 }
 
 // 开发板默认使用 VI 设备 0；不同通道对应不同的 VI 节点。
@@ -422,33 +436,33 @@ static int vo_init(int VoLayer, int VoDev, int VoChn, int Width, int Height) {
 }
 
 static int vo_deinit(int VoLayer, int VoDev, int VoChn) {
-	int ret = 0;
+	int ret = RK_SUCCESS;
+	int step_ret;
 
-	ret = RK_MPI_VO_DisableChn(VoLayer, VoChn);
-	if (ret != RK_SUCCESS) {
-		RK_LOGE("RK_MPI_VO_DisableChn failed, ret = %x", ret);
-		return ret;
-	}
+	step_ret = RK_MPI_VO_DisableChn(VoLayer, VoChn);
+	if (step_ret != RK_SUCCESS)
+		RK_LOGE("RK_MPI_VO_DisableChn failed, ret = %x", step_ret);
+	ret |= step_ret;
 
-	ret = RK_MPI_VO_DisableLayer(VoLayer);
-	if (ret != RK_SUCCESS) {
-		RK_LOGE("RK_MPI_VO_DisableLayer failed, ret = %x", ret);
-		return ret;
-	}
+	step_ret = RK_MPI_VO_DisableLayer(VoLayer);
+	if (step_ret != RK_SUCCESS)
+		RK_LOGE("RK_MPI_VO_DisableLayer failed, ret = %x", step_ret);
+	ret |= step_ret;
 
-	ret = RK_MPI_VO_Disable(VoDev);
-	if (ret != RK_SUCCESS) {
-		RK_LOGE("RK_MPI_VO_Disable failed, ret = %x", ret);
-		return ret;
-	}
+	step_ret = RK_MPI_VO_Disable(VoDev);
+	if (step_ret != RK_SUCCESS)
+		RK_LOGE("RK_MPI_VO_Disable failed, ret = %x", step_ret);
+	ret |= step_ret;
 
-	ret = RK_MPI_VO_UnBindLayer(VoLayer, VoDev);
-	if (ret != RK_SUCCESS) {
-		RK_LOGE("RK_MPI_VO_UnBindLayer failed, ret = %x", ret);
-		return ret;
-	}
+	step_ret = RK_MPI_VO_UnBindLayer(VoLayer, VoDev);
+	if (step_ret != RK_SUCCESS)
+		RK_LOGE("RK_MPI_VO_UnBindLayer failed, ret = %x", step_ret);
+	ret |= step_ret;
 
-	RK_MPI_VO_CloseFd();
+	step_ret = RK_MPI_VO_CloseFd();
+	if (step_ret != RK_SUCCESS)
+		RK_LOGE("RK_MPI_VO_CloseFd failed, ret = %x", step_ret);
+	ret |= step_ret;
 
 	RK_LOGE("Destroy vo [dev: %d, layer: %d, chn: %d] success!",
 			VoDev, VoLayer, VoChn);
@@ -539,6 +553,7 @@ int main(int argc, char *argv[]) {
 	printf("#Vo Devices: %d\n\n", VoDev);
 
 	signal(SIGINT, sigterm_handler);
+	signal(SIGTERM, sigterm_handler);
 
 	s32Ret = isp_init(0, IqFileDir);
 	if (s32Ret != RK_SUCCESS) {
@@ -583,14 +598,15 @@ int main(int argc, char *argv[]) {
 	}
 	pthread_join(main_thread, NULL);
 
+	/* Drain consumers before stopping ISP/VI, which owns the source buffers. */
+	vo_deinit(VoLayer, VoDev, VoChn);
+	vpss_deinit();
+
 	s32Ret = RK_MPI_VI_DisableChn(0, s32chnlId);
 	RK_LOGE("RK_MPI_VI_DisableChn %x", s32Ret);
 
 	s32Ret = RK_MPI_VI_DisableDev(0);
 	RK_LOGE("RK_MPI_VI_DisableDev %x", s32Ret);
-
-	vpss_deinit();
-	vo_deinit(VoLayer, VoDev, VoChn);
 	ret = 0;
 	goto __FAILED;
 

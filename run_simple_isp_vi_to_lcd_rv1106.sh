@@ -48,6 +48,11 @@ restore_rkipc() {
 stop_rkipc() {
 	killall rkipc >/dev/null 2>&1
 
+	count=0
+	while pidof rkipc >/dev/null 2>&1 && [ "$count" -lt 5 ]; do
+		count=$((count + 1))
+		sleep 1
+	done
 	if pidof rkipc >/dev/null 2>&1; then
 		echo "Failed to stop rkipc" >&2
 		return 1
