@@ -86,7 +86,8 @@ stop_rkipc || exit 1
 
 export LD_LIBRARY_PATH=/oem/usr/lib
 "$APP" -a /oem/usr/share/iqfiles \
-	-w 2304 -h 1296 -W 720 -H 720 -r "$rotation" -I 0 -l 0 -d 0 &
+	-w 2304 -h 1296 -W 720 -H 720 -r "$rotation" -I 0 -l 0 -d 0 \
+	-o "$APP_DIR/test.h264" &
 app_pid=$!
 wait "$app_pid"
 status=$?

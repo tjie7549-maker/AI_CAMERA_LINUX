@@ -1,5 +1,5 @@
 # Build the RV1106 VI-to-LCD demo from this directory.
-
+#scp /home/summary/linux/ai_cam/out/simple_vi_get_frame_send_vo_rv1106 run_simple_isp_vi_to_lcd_rv1106.sh root@172.32.0.93:/root/userdata
 SDK_DIR ?= ../luckfox-pico
 MEDIA_PARAM ?= $(SDK_DIR)/media/Makefile.param
 TOOLCHAIN_DIR ?= $(SDK_DIR)/tools/linux/toolchain/arm-rockchip830-linux-uclibcgnueabihf/bin
@@ -15,13 +15,14 @@ endif
 include $(MEDIA_PARAM)
 
 TARGET := simple_vi_get_frame_send_vo_rv1106
-SOURCE := $(TARGET).c
+SOURCES := $(wildcard src/*.c)
 SCRIPT := run_simple_isp_vi_to_lcd_rv1106.sh
 OUT_DIR := out
 
 CC := $(RK_MEDIA_CROSS)-gcc
 
 CPPFLAGS := \
+	-Iinclude \
 	-I$(RK_MEDIA_OUTPUT)/include \
 	-I$(RK_MEDIA_OUTPUT)/include/rkaiq \
 	-I$(RK_MEDIA_OUTPUT)/include/rkaiq/uAPI2 \
@@ -47,8 +48,8 @@ all: $(OUT_DIR)/$(TARGET) $(OUT_DIR)/$(SCRIPT)
 $(OUT_DIR):
 	@mkdir -p $@
 
-$(OUT_DIR)/$(TARGET): $(SOURCE) | $(OUT_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $< -o $@ $(LDFLAGS) $(LDLIBS)
+$(OUT_DIR)/$(TARGET): $(SOURCES) | $(OUT_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(SOURCES) -o $@ $(LDFLAGS) $(LDLIBS)
 
 $(OUT_DIR)/$(SCRIPT): $(SCRIPT) | $(OUT_DIR)
 	install -m 755 $< $@
