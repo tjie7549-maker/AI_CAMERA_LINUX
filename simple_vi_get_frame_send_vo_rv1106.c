@@ -17,6 +17,7 @@
 #include "rk_mpi_sys.h"
 #include "rk_mpi_vi.h"
 #include "rk_mpi_vo.h"
+#include "rk_mpi_vpss.h"
 
 static bool quit = false;
 static	int ViWidth = 2304;
@@ -27,6 +28,8 @@ static	int s32chnlId = 0;
 static	int VoLayer = 0;
 static	int VoDev = 0;
 static	int VoChn = 0;
+static const VPSS_GRP VpssGrp = 0;
+static const VPSS_CHN VpssChn = 0;
 static	int VoRotationDegrees = 180;
 static	ROTATION_E VoRotation = ROTATION_180;
 static const char *IqFileDir = "/oem/usr/share/iqfiles";
@@ -56,10 +59,21 @@ static XCamReturn isp_error_callback(rk_aiq_err_msg_t *msg) {
 
 static int isp_init(int cam_id, const char *iq_file_dir) {
 	rk_aiq_static_info_t static_info;
+	XCamReturn ret;
 
 	rk_aiq_uapi2_sysctl_enumStaticMetasByPhyId(cam_id, &static_info);
 	printf("#IQ File Dir: %s\n", iq_file_dir);
 	printf("#ISP Sensor: %s\n", static_info.sensor_info.sensor_name);
+
+	setenv("HDR_MODE", "0", 1);
+	rk_aiq_uapi2_sysctl_preInit_devBufCnt(static_info.sensor_info.sensor_name,
+	                                      "rkraw_rx", 2);
+	ret = rk_aiq_uapi2_sysctl_preInit_scene(static_info.sensor_info.sensor_name,
+	                                         "normal", "");
+	if (ret != XCAM_RETURN_NO_ERROR) {
+		RK_LOGE("rk_aiq_uapi2_sysctl_preInit_scene failed: %d", ret);
+		return RK_FAILURE;
+	}
 
 	g_aiq_ctx = rk_aiq_uapi2_sysctl_init(static_info.sensor_info.sensor_name,
 	                                     iq_file_dir, isp_error_callback,
@@ -102,6 +116,7 @@ static void *GetMediaBuffer0(void *arg) {
 	RK_S32 waitTime = 1000;
 	int pipeId = 0;
 	VIDEO_FRAME_INFO_S stViFrame;
+	VIDEO_FRAME_INFO_S stVpssFrame;
 	RK_U64 stat_start_us = 0;
 	RK_U64 latency_sum_us = 0;
 	RK_U64 latency_max_us = 0;
@@ -111,13 +126,28 @@ static void *GetMediaBuffer0(void *arg) {
 	while (!quit) {
 		s32Ret = RK_MPI_VI_GetChnFrame(pipeId, s32chnlId, &stViFrame, waitTime);
 		if (s32Ret == RK_SUCCESS) {
-			RK_U64 now_us = get_monotonic_time_us();
+			int send_ret = RK_MPI_VPSS_SendFrame(VpssGrp, 0, &stViFrame, -1);
+			s32Ret = RK_MPI_VI_ReleaseChnFrame(pipeId, s32chnlId, &stViFrame);
+			if (s32Ret != RK_SUCCESS) {
+				RK_LOGE("RK_MPI_VI_ReleaseChnFrame fail %x", s32Ret);
+			}
+			if (send_ret != RK_SUCCESS) {
+				RK_LOGE("RK_MPI_VPSS_SendFrame fail %x", send_ret);
+				continue;
+			}
 
+			s32Ret = RK_MPI_VPSS_GetChnFrame(VpssGrp, VpssChn, &stVpssFrame, waitTime);
+			if (s32Ret != RK_SUCCESS) {
+				RK_LOGE("RK_MPI_VPSS_GetChnFrame timeout %x", s32Ret);
+				continue;
+			}
+
+			RK_U64 now_us = get_monotonic_time_us();
 			if (stat_start_us == 0)
 				stat_start_us = now_us;
 			frame_count++;
-			if (stViFrame.stVFrame.u64PTS > 0 && now_us >= stViFrame.stVFrame.u64PTS) {
-				RK_U64 latency_us = now_us - stViFrame.stVFrame.u64PTS;
+			if (stVpssFrame.stVFrame.u64PTS > 0 && now_us >= stVpssFrame.stVFrame.u64PTS) {
+				RK_U64 latency_us = now_us - stVpssFrame.stVFrame.u64PTS;
 				latency_sum_us += latency_us;
 				if (latency_us > latency_max_us)
 					latency_max_us = latency_us;
@@ -128,11 +158,11 @@ static void *GetMediaBuffer0(void *arg) {
 				double elapsed_s = (double)(now_us - stat_start_us) / 1000000.0;
 				double fps = frame_count / elapsed_s;
 				if (latency_count > 0) {
-					printf("#Stats: FPS=%.2f, VI latency avg=%.2f ms, max=%.2f ms\n",
+					printf("#Stats: FPS=%.2f, VI-to-VPSS latency avg=%.2f ms, max=%.2f ms\n",
 					       fps, (double)latency_sum_us / latency_count / 1000.0,
 					       (double)latency_max_us / 1000.0);
 				} else {
-					printf("#Stats: FPS=%.2f, VI latency unavailable (PTS is 0)\n", fps);
+					printf("#Stats: FPS=%.2f, VI-to-VPSS latency unavailable (PTS is 0)\n", fps);
 				}
 				stat_start_us = now_us;
 				latency_sum_us = 0;
@@ -141,13 +171,12 @@ static void *GetMediaBuffer0(void *arg) {
 				latency_count = 0;
 			}
 
-			RK_MPI_VO_SendFrame(VoLayer, VoChn, &stViFrame, -1);
-
-			// 7.release the frame
-			s32Ret = RK_MPI_VI_ReleaseChnFrame(pipeId, s32chnlId, &stViFrame);
-			if (s32Ret != RK_SUCCESS) {
-				RK_LOGE("RK_MPI_VI_ReleaseChnFrame fail %x", s32Ret);
-			}
+			s32Ret = RK_MPI_VO_SendFrame(VoLayer, VoChn, &stVpssFrame, -1);
+			if (s32Ret != RK_SUCCESS)
+				RK_LOGE("RK_MPI_VO_SendFrame fail %x", s32Ret);
+			s32Ret = RK_MPI_VPSS_ReleaseChnFrame(VpssGrp, VpssChn, &stVpssFrame);
+			if (s32Ret != RK_SUCCESS)
+				RK_LOGE("RK_MPI_VPSS_ReleaseChnFrame fail %x", s32Ret);
 		} else {
 			RK_LOGE("RK_MPI_VI_GetChnFrame timeout %x", s32Ret);
 		}
@@ -156,7 +185,89 @@ static void *GetMediaBuffer0(void *arg) {
 	return NULL;
 }
 
-// demo板dev默认都是0，根据不同的channel 来选择不同的vi节点
+static int vpss_init(int input_width, int input_height, int output_width, int output_height) {
+	VPSS_GRP_ATTR_S stGrpAttr;
+	VPSS_CHN_ATTR_S stChnAttr;
+	VPSS_CROP_INFO_S stCropInfo;
+	int crop_size = input_width < input_height ? input_width : input_height;
+	int crop_x;
+	int crop_y;
+	int ret;
+
+	/* YUV420 的裁剪坐标和宽高必须为偶数。 */
+	crop_size &= ~1;
+	crop_x = ((input_width - crop_size) / 2) & ~1;
+	crop_y = ((input_height - crop_size) / 2) & ~1;
+	if (crop_size < 64 || output_width < 64 || output_height < 64) {
+		RK_LOGE("Invalid VPSS crop/output size");
+		return RK_FAILURE;
+	}
+
+	memset(&stGrpAttr, 0, sizeof(stGrpAttr));
+	stGrpAttr.u32MaxW = input_width;
+	stGrpAttr.u32MaxH = input_height;
+	stGrpAttr.enPixelFormat = RK_FMT_YUV420SP;
+	stGrpAttr.enDynamicRange = DYNAMIC_RANGE_SDR8;
+	stGrpAttr.stFrameRate.s32SrcFrameRate = -1;
+	stGrpAttr.stFrameRate.s32DstFrameRate = -1;
+	stGrpAttr.enCompressMode = COMPRESS_MODE_NONE;
+
+	ret = RK_MPI_VPSS_CreateGrp(VpssGrp, &stGrpAttr);
+	if (ret != RK_SUCCESS)
+		return ret;
+
+	memset(&stCropInfo, 0, sizeof(stCropInfo));
+	stCropInfo.bEnable = RK_TRUE;
+	stCropInfo.enCropCoordinate = VPSS_CROP_ABS_COOR;
+	stCropInfo.stCropRect.s32X = crop_x;
+	stCropInfo.stCropRect.s32Y = crop_y;
+	stCropInfo.stCropRect.u32Width = crop_size;
+	stCropInfo.stCropRect.u32Height = crop_size;
+	ret = RK_MPI_VPSS_SetGrpCrop(VpssGrp, &stCropInfo);
+	if (ret != RK_SUCCESS)
+		goto failed_destroy_grp;
+
+	memset(&stChnAttr, 0, sizeof(stChnAttr));
+	stChnAttr.enChnMode = VPSS_CHN_MODE_USER;
+	stChnAttr.enDynamicRange = DYNAMIC_RANGE_SDR8;
+	stChnAttr.enPixelFormat = RK_FMT_YUV420SP;
+	stChnAttr.stFrameRate.s32SrcFrameRate = -1;
+	stChnAttr.stFrameRate.s32DstFrameRate = -1;
+	stChnAttr.u32Width = output_width;
+	stChnAttr.u32Height = output_height;
+	stChnAttr.enCompressMode = COMPRESS_MODE_NONE;
+	stChnAttr.u32Depth = 2;
+	stChnAttr.u32FrameBufCnt = 3;
+	ret = RK_MPI_VPSS_SetChnAttr(VpssGrp, VpssChn, &stChnAttr);
+	if (ret != RK_SUCCESS)
+		goto failed_destroy_grp;
+
+	ret = RK_MPI_VPSS_EnableChn(VpssGrp, VpssChn);
+	if (ret != RK_SUCCESS)
+		goto failed_destroy_grp;
+
+	ret = RK_MPI_VPSS_StartGrp(VpssGrp);
+	if (ret != RK_SUCCESS)
+		goto failed_disable_chn;
+
+	printf("#VPSS: crop [%d %d %d %d] -> scale %dx%d\n", crop_x, crop_y,
+	       crop_size, crop_size, output_width, output_height);
+	return RK_SUCCESS;
+
+failed_disable_chn:
+	RK_MPI_VPSS_DisableChn(VpssGrp, VpssChn);
+failed_destroy_grp:
+	RK_MPI_VPSS_DestroyGrp(VpssGrp);
+	return ret;
+}
+
+static void vpss_deinit(void) {
+	RK_MPI_VPSS_StopGrp(VpssGrp);
+	RK_MPI_VPSS_DisableChn(VpssGrp, VpssChn);
+	RK_MPI_VPSS_DestroyGrp(VpssGrp);
+}
+
+// 开发板默认使用 VI 设备 0；不同通道对应不同的 VI 节点。
 int vi_dev_init() {
 	printf("%s\n", __func__);
 	int ret = 0;
@@ -167,10 +278,10 @@ int vi_dev_init() {
 	VI_DEV_BIND_PIPE_S stBindPipe;
 	memset(&stDevAttr, 0, sizeof(stDevAttr));
 	memset(&stBindPipe, 0, sizeof(stBindPipe));
-	// 0. get dev config status
+	// 获取设备配置状态。
 	ret = RK_MPI_VI_GetDevAttr(devId, &stDevAttr);
 	if (ret == RK_ERR_VI_NOT_CONFIG) {
-		// 0-1.config dev
+		// 配置 VI 设备。
 		ret = RK_MPI_VI_SetDevAttr(devId, &stDevAttr);
 		if (ret != RK_SUCCESS) {
 			printf("RK_MPI_VI_SetDevAttr %x\n", ret);
@@ -179,16 +290,16 @@ int vi_dev_init() {
 	} else {
 		printf("RK_MPI_VI_SetDevAttr already\n");
 	}
-	// 1.get dev enable status
+	// 获取设备使能状态。
 	ret = RK_MPI_VI_GetDevIsEnable(devId);
 	if (ret != RK_SUCCESS) {
-		// 1-2.enable dev
+		// 使能 VI 设备。
 		ret = RK_MPI_VI_EnableDev(devId);
 		if (ret != RK_SUCCESS) {
 			printf("RK_MPI_VI_EnableDev %x\n", ret);
 			return -1;
 		}
-		// 1-3.bind dev/pipe
+		// 绑定 VI 设备与管道。
 		stBindPipe.u32Num = 1;
 		stBindPipe.PipeId[0] = pipeId;
 		ret = RK_MPI_VI_SetDevBindPipe(devId, &stBindPipe);
@@ -206,17 +317,17 @@ int vi_dev_init() {
 int vi_chn_init(int channelId, int width, int height) {
 	int ret;
 	int buf_cnt = 2;
-	// VI init
+	// 配置 VI 通道。
 	VI_CHN_ATTR_S vi_chn_attr;
 	memset(&vi_chn_attr, 0, sizeof(vi_chn_attr));
 	vi_chn_attr.stIspOpt.u32BufCount = buf_cnt;
 	vi_chn_attr.stIspOpt.enMemoryType =
-	    VI_V4L2_MEMORY_TYPE_DMABUF; // VI_V4L2_MEMORY_TYPE_MMAP;
+	    VI_V4L2_MEMORY_TYPE_DMABUF; // 也可使用 VI_V4L2_MEMORY_TYPE_MMAP。
 	vi_chn_attr.stSize.u32Width = width;
 	vi_chn_attr.stSize.u32Height = height;
 	vi_chn_attr.enPixelFormat = RK_FMT_YUV420SP;
-	vi_chn_attr.enCompressMode = COMPRESS_MODE_NONE; // COMPRESS_AFBC_16x16;
-	vi_chn_attr.u32Depth = 2; //0, get fail, 1 - u32BufCount, can get, if bind to other device, must be < u32BufCount
+	vi_chn_attr.enCompressMode = COMPRESS_MODE_NONE; // 可选 COMPRESS_AFBC_16x16。
+	vi_chn_attr.u32Depth = 2; // 0 无法取帧；绑定其他设备时必须小于缓冲区数量。
 	ret = RK_MPI_VI_SetChnAttr(0, channelId, &vi_chn_attr);
 	ret |= RK_MPI_VI_EnableChn(0, channelId);
 	if (ret) {
@@ -258,7 +369,7 @@ static int vo_init(int VoLayer, int VoDev, int VoChn, int Width, int Height) {
 		return ret;
 	}
 
-	/* Enable Layer */
+	/* 使能显示图层。 */
 	stLayerAttr.enPixFormat      = RK_FMT_RGB888;
 	stLayerAttr.enCompressMode   = COMPRESS_AFBC_16x16;
 	stLayerAttr.stDispRect.s32X  = 0;
@@ -452,10 +563,16 @@ int main(int argc, char *argv[]) {
 		goto __FAILED;
 	}
 
+	s32Ret = vpss_init(ViWidth, ViHeight, VoWidth, VoHeight);
+	if (s32Ret != RK_SUCCESS) {
+		RK_LOGE("vpss_init failed! ret=%x", s32Ret);
+		goto __FAILED_VI_CHN;
+	}
+
 	s32Ret = vo_init(VoLayer, VoDev, VoChn, VoWidth, VoHeight);
 	if (s32Ret != RK_SUCCESS) {
 		RK_LOGE("vo_init failed!");
-		goto __FAILED_VI_CHN;
+		goto __FAILED_VPSS;
 	}
 
 	pthread_t main_thread;
@@ -472,9 +589,13 @@ int main(int argc, char *argv[]) {
 	s32Ret = RK_MPI_VI_DisableDev(0);
 	RK_LOGE("RK_MPI_VI_DisableDev %x", s32Ret);
 
+	vpss_deinit();
 	vo_deinit(VoLayer, VoDev, VoChn);
 	ret = 0;
 	goto __FAILED;
+
+__FAILED_VPSS:
+	vpss_deinit();
 
 __FAILED_VI_CHN:
 	s32Ret = RK_MPI_VI_DisableChn(0, s32chnlId);
