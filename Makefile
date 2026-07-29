@@ -39,7 +39,7 @@ LDFLAGS := \
 	-L$(RK_MEDIA_OUTPUT)/lib \
 	-L$(RK_MEDIA_OUTPUT)/root/usr/lib \
 	-Wl,--gc-sections -Wl,--as-needed
-LDLIBS := -lrockchip_mpp -lrga -ldrm -lpthread -lstdc++ -lrockit_full -lrkaiq
+LDLIBS := -lrockchip_mpp -lrga -ldrm -lpthread -lstdc++ -lrockit_full -lrkaiq -lrtsp
 
 .PHONY: all clean help
 

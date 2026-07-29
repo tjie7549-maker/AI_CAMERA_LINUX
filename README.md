@@ -8,10 +8,18 @@
 ```text
 ISP -> VI (2304x1296 NV12) -> VPSS
                               |- ch0: 中心裁剪为 1296x1296 -> 缩放到 720x720 -> LCD
-                              `- ch1: 保持 16:9 -> 缩放到 1280x720 NV12 -> H.264 VENC
+                              |- ch1: 保持 16:9 -> 1280x720 NV12 -> H.264 VENC -> RTSP /live/0
+                              `- ch2: 保持 16:9 -> 640x360 NV12 -> H.264 VENC -> RTSP /live/1
 ```
 
-LCD 分支使用中心裁剪，人物不会因 16:9 画面直接压缩到正方形屏幕而变形；编码分支保留完整的 16:9 画面。
+LCD 分支使用中心裁剪，人物不会因 16:9 画面直接压缩到正方形屏幕而变形；两个编码分支均保留完整的 16:9 画面。
+
+RTSP 地址：
+
+```text
+rtsp://172.32.0.93:554/live/0  主码流，1280x720，2 Mbps
+rtsp://172.32.0.93:554/live/1  子码流，640x360，1 Mbps
+```
 
 ## 工程结构
 
@@ -23,12 +31,14 @@ src/ai_cam_isp.c       ISP 生命周期
 src/ai_cam_vi.c        VI 生命周期
 src/ai_cam_vpss.c      LCD 裁剪分支与编码分支
 src/ai_cam_vo.c        LCD/VO 生命周期
-src/ai_cam_venc.c      H.264 编码、VPSS 绑定与码流写文件
+src/ai_cam_venc.c      H.264 编码、VPSS 绑定、码流写文件与 RTSP 发送
+src/ai_cam_rtsp.c      RTSP 服务与 /live/0、/live/1 会话生命周期
 run_simple_isp_vi_to_lcd_rv1106.sh  板端运行脚本
 README.md              工程说明
 ```
 
-模块的初始化顺序为 ISP、SYS、VI、VPSS、VENC、VO；退出时按相反的资源依赖顺序回收。
+模块依次初始化 ISP、SYS、VI、VPSS、VENC、RTSP 与帧转发；随后启动 VO。这样 LCD 等待首次
+vsync 时，编码与 RTSP 不会被阻塞。退出时先停止线程，再关闭 RTSP、解绑并回收媒体资源。
 
 ## 编译
 
@@ -92,3 +102,20 @@ ffplay -f h264 -framerate 25 /tmp/rv1106_test.h264
 ```
 
 已验证的预期结果为：H.264 High Profile、1280x720、25 FPS、150 帧。
+
+## RTSP 验证
+
+板端启动程序后检查监听端口：
+
+```sh
+netstat -lntp | grep 554 || ss -lntp | grep 554
+```
+
+电脑或 ROCK 2A 拉取主码流：
+
+```sh
+ffplay -fflags nobuffer -flags low_delay -framedrop \
+  rtsp://172.32.0.93:554/live/0
+```
+
+子码流地址为 `rtsp://172.32.0.93:554/live/1`。

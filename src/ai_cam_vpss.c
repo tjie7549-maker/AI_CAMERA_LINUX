@@ -85,17 +85,46 @@ int ai_cam_vpss_start(AiCamApp *app) {
 	ret = RK_MPI_VPSS_EnableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_ENCODE_CHN);
 	if (ret != RK_SUCCESS)
 		goto failed_display;
-	ret = RK_MPI_VPSS_StartGrp(AI_CAM_VPSS_GRP);
+
+	memset(&chn_attr, 0, sizeof(chn_attr));
+	chn_attr.enChnMode = VPSS_CHN_MODE_USER;
+	chn_attr.enDynamicRange = DYNAMIC_RANGE_SDR8;
+	chn_attr.enPixelFormat = RK_FMT_YUV420SP;
+	chn_attr.stFrameRate.s32SrcFrameRate = -1;
+	chn_attr.stFrameRate.s32DstFrameRate = -1;
+	chn_attr.u32Width = app->config.sub_venc_width;
+	chn_attr.u32Height = app->config.sub_venc_height;
+	chn_attr.enCompressMode = COMPRESS_MODE_NONE;
+	chn_attr.u32Depth = 2;
+	chn_attr.u32FrameBufCnt = 3;
+	ret = RK_MPI_VPSS_SetChnAttr(AI_CAM_VPSS_GRP, AI_CAM_VPSS_SUB_ENCODE_CHN,
+	                             &chn_attr);
 	if (ret != RK_SUCCESS)
 		goto failed_encode;
+	memset(&crop, 0, sizeof(crop));
+	crop.bEnable = RK_FALSE;
+	ret = RK_MPI_VPSS_SetChnCrop(AI_CAM_VPSS_GRP, AI_CAM_VPSS_SUB_ENCODE_CHN,
+	                             &crop);
+	if (ret != RK_SUCCESS)
+		goto failed_encode;
+	ret = RK_MPI_VPSS_EnableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_SUB_ENCODE_CHN);
+	if (ret != RK_SUCCESS)
+		goto failed_sub_encode;
+	ret = RK_MPI_VPSS_StartGrp(AI_CAM_VPSS_GRP);
+	if (ret != RK_SUCCESS)
+		goto failed_sub_encode;
 
 	printf("#VPSS display: crop [%d %d %d %d] -> scale %dx%d\n", crop_x, crop_y,
 	       crop_size, crop_size, app->config.vo_width, app->config.vo_height);
 	printf("#VPSS encoder: scale %dx%d NV12\n", app->config.venc_width,
 	       app->config.venc_height);
+	printf("#VPSS sub encoder: scale %dx%d NV12\n", app->config.sub_venc_width,
+	       app->config.sub_venc_height);
 	app->vpss_initialized = true;
 	return RK_SUCCESS;
 
+failed_sub_encode:
+	RK_MPI_VPSS_DisableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_SUB_ENCODE_CHN);
 failed_encode:
 	RK_MPI_VPSS_DisableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_ENCODE_CHN);
 failed_display:
@@ -110,6 +139,7 @@ void ai_cam_vpss_stop(AiCamApp *app) {
 		return;
 
 	RK_MPI_VPSS_StopGrp(AI_CAM_VPSS_GRP);
+	RK_MPI_VPSS_DisableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_SUB_ENCODE_CHN);
 	RK_MPI_VPSS_DisableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_ENCODE_CHN);
 	RK_MPI_VPSS_DisableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_DISPLAY_CHN);
 	RK_MPI_VPSS_DestroyGrp(AI_CAM_VPSS_GRP);

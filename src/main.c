@@ -54,8 +54,15 @@ int main(int argc, char *argv[]) {
 	printf("#VENC: H.264 %dx%d, %d kbps -> %s\n", app.config.venc_width,
 	       app.config.venc_height, app.config.venc_bitrate_kbps,
 	       app.config.h264_output_path);
+	printf("#RTSP main: rtsp://0.0.0.0:554/live/0 (%dx%d, %d kbps)\n",
+	       app.config.venc_width, app.config.venc_height, app.config.venc_bitrate_kbps);
+	printf("#RTSP sub: rtsp://0.0.0.0:554/live/1 (%dx%d, %d kbps)\n",
+	       app.config.sub_venc_width, app.config.sub_venc_height,
+	       app.config.sub_venc_bitrate_kbps);
 	signal(SIGINT, signal_handler);
 	signal(SIGTERM, signal_handler);
+	/* An RTSP client may disconnect while a VENC worker is sending a frame. */
+	signal(SIGPIPE, SIG_IGN);
 	if (ai_cam_start(&app) != RK_SUCCESS)
 		return 1;
 
@@ -65,5 +72,5 @@ int main(int argc, char *argv[]) {
 		usleep(50000);
 	}
 	ai_cam_stop(&app);
-	return 0;
+	return app.runtime_failed ? 1 : 0;
 }
