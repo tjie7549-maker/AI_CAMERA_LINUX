@@ -114,6 +114,7 @@ void ai_cam_default_config(AiCamConfig *config) {
 	config->h264_output_path = "test.h264";
 	config->venc_width = 1280;
 	config->venc_height = 720;
+	config->source_fps = 30;
 	config->venc_fps = 25;
 	config->venc_bitrate_kbps = 2048;
 	config->sub_venc_width = 640;

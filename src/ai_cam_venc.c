@@ -38,8 +38,23 @@ static RK_U8 *ai_cam_venc_payload(VENC_PACK_S *pack) {
 	return data;
 }
 
+static int ai_cam_venc_set_h264_vui_timing(VENC_CHN channel, int fps) {
+	VENC_H264_VUI_S vui;
+	int ret;
+
+	memset(&vui, 0, sizeof(vui));
+	ret = RK_MPI_VENC_GetH264Vui(channel, &vui);
+	if (ret != RK_SUCCESS)
+		return ret;
+	vui.stVuiTimeInfo.timing_info_present_flag = RK_TRUE;
+	vui.stVuiTimeInfo.fixed_frame_rate_flag = RK_TRUE;
+	vui.stVuiTimeInfo.num_units_in_tick = 1;
+	vui.stVuiTimeInfo.time_scale = fps * 2;
+	return RK_MPI_VENC_SetH264Vui(channel, &vui);
+}
+
 static int ai_cam_venc_start_channel(VENC_CHN channel, int width, int height,
-	                                 int fps, int bitrate_kbps) {
+	                                 int source_fps, int fps, int bitrate_kbps) {
 	VENC_CHN_ATTR_S attr;
 	VENC_RECV_PIC_PARAM_S recv_param;
 	int ret;
@@ -60,7 +75,7 @@ static int ai_cam_venc_start_channel(VENC_CHN channel, int width, int height,
 	attr.stRcAttr.enRcMode = VENC_RC_MODE_H264CBR;
 	attr.stRcAttr.stH264Cbr.u32Gop = fps * 2;
 	attr.stRcAttr.stH264Cbr.u32BitRate = bitrate_kbps;
-	attr.stRcAttr.stH264Cbr.u32SrcFrameRateNum = fps;
+	attr.stRcAttr.stH264Cbr.u32SrcFrameRateNum = source_fps;
 	attr.stRcAttr.stH264Cbr.u32SrcFrameRateDen = 1;
 	attr.stRcAttr.stH264Cbr.fr32DstFrameRateNum = fps;
 	attr.stRcAttr.stH264Cbr.fr32DstFrameRateDen = 1;
@@ -72,8 +87,15 @@ static int ai_cam_venc_start_channel(VENC_CHN channel, int width, int height,
 	memset(&recv_param, 0, sizeof(recv_param));
 	recv_param.s32RecvPicNum = -1;
 	ret = RK_MPI_VENC_StartRecvFrame(channel, &recv_param);
-	if (ret != RK_SUCCESS)
+	if (ret != RK_SUCCESS) {
 		RK_MPI_VENC_DestroyChn(channel);
+		return ret;
+	}
+	ret = ai_cam_venc_set_h264_vui_timing(channel, fps);
+	if (ret != RK_SUCCESS) {
+		RK_MPI_VENC_StopRecvFrame(channel);
+		RK_MPI_VENC_DestroyChn(channel);
+	}
 	return ret;
 }
 
@@ -84,14 +106,16 @@ static void ai_cam_venc_stop_channel(VENC_CHN channel) {
 
 int ai_cam_venc_start(AiCamApp *app) {
 	int ret = ai_cam_venc_start_channel(AI_CAM_VENC_CHN, app->config.venc_width,
-	                                    app->config.venc_height, app->config.venc_fps,
+	                                    app->config.venc_height, app->config.source_fps,
+	                                    app->config.venc_fps,
 	                                    app->config.venc_bitrate_kbps);
 	if (ret != RK_SUCCESS)
 		return ret;
 	app->venc_initialized = true;
 
 	ret = ai_cam_venc_start_channel(AI_CAM_SUB_VENC_CHN, app->config.sub_venc_width,
-	                                app->config.sub_venc_height, app->config.sub_venc_fps,
+	                                app->config.sub_venc_height, app->config.source_fps,
+	                                app->config.sub_venc_fps,
 	                                app->config.sub_venc_bitrate_kbps);
 	if (ret != RK_SUCCESS) {
 		ai_cam_venc_stop_channel(AI_CAM_VENC_CHN);

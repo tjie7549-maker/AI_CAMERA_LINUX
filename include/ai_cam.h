@@ -34,6 +34,7 @@ typedef struct {
 	const char *h264_output_path;
 	int venc_width;
 	int venc_height;
+	int source_fps;
 	int venc_fps;
 	int venc_bitrate_kbps;
 	int sub_venc_width;
