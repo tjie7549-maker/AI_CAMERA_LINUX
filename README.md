@@ -63,19 +63,28 @@ out/run_simple_isp_vi_to_lcd_rv1106.sh
 
 ## 板端运行
 
-`rkipc` 会占用 ISP、VI 或 VENC 资源。运行本程序前需停止它：
+运行脚本会停止 `rkipc`，使用默认的 ISP、LCD 与 RTSP 参数，并将本地 H.264 文件输出关闭：
 
 ```sh
 cd /root/userdata
-killall rkipc
-sleep 4
-LD_LIBRARY_PATH=/oem/usr/lib ./simple_vi_get_frame_send_vo_rv1106 \
-  -a /oem/usr/share/iqfiles \
-  -w 2304 -h 1296 -W 720 -H 720 -r 180 -I 0 -l 0 -d 0 \
-  -o /root/userdata/test.h264
+./run_simple_isp_vi_to_lcd_rv1106.sh
 ```
 
 正常长期运行时用 Ctrl+C 退出。
+
+默认参数为：IQ 文件目录 `/oem/usr/share/iqfiles`、摄像头 `2304x1296`、LCD
+`720x720`、旋转 `180`、ISP/VO 均为 `0`、H.264 输出为 `/dev/null`。原有的旋转角度
+传参仍可使用：
+
+```sh
+./run_simple_isp_vi_to_lcd_rv1106.sh 90
+```
+
+也可用命名参数覆盖默认值，例如保存主码流和修改 LCD 旋转：
+
+```sh
+./run_simple_isp_vi_to_lcd_rv1106.sh --rotation 90 --output /root/userdata/test.h264
+```
 
 ## 150 帧 H.264 验证
 
