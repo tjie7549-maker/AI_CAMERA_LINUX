@@ -27,6 +27,7 @@ int ai_cam_vo_start(AiCamApp *app) {
 	VO_PUB_ATTR_S pub_attr;
 	VO_VIDEO_LAYER_ATTR_S layer_attr;
 	VO_CHN_ATTR_S chn_attr;
+	RK_U32 disp_buf_len = 3;
 	ROTATION_E rotation;
 	bool layer_bound = false;
 	bool dev_enabled = false;
@@ -54,6 +55,9 @@ int ai_cam_vo_start(AiCamApp *app) {
 	if (ret != RK_SUCCESS)
 		goto failed;
 	dev_enabled = true;
+	ret = RK_MPI_VO_SetLayerDispBufLen(app->config.vo_layer, disp_buf_len);
+	if (ret != RK_SUCCESS)
+		goto failed;
 
 	layer_attr.enPixFormat = RK_FMT_RGB888;
 	layer_attr.enCompressMode = COMPRESS_AFBC_16x16;
