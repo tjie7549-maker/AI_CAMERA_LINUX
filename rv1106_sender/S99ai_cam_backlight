@@ -1,0 +1,14 @@
+#!/bin/sh
+
+BACKLIGHT_POWER=/sys/class/backlight/backlight/bl_power
+
+case "$1" in
+start)
+	count=0
+	while [ ! -w "$BACKLIGHT_POWER" ] && [ "$count" -lt 10 ]; do
+		count=$((count + 1))
+		sleep 1
+	done
+	[ -w "$BACKLIGHT_POWER" ] && echo 0 > "$BACKLIGHT_POWER"
+	;;
+esac

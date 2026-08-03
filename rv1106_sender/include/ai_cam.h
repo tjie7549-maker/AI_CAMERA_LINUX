@@ -45,6 +45,13 @@ typedef struct {
 } AiCamConfig;
 
 typedef struct {
+	RK_U32 frame_count;
+	RK_U32 latency_count;
+	RK_U64 latency_sum_us;
+	RK_U64 latency_max_us;
+} AiCamStats;
+
+typedef struct {
 	AiCamConfig config;
 	rk_aiq_sys_ctx_t *aiq_ctx;
 	volatile sig_atomic_t stop_requested;
@@ -61,6 +68,7 @@ typedef struct {
 	bool vo_initialized;
 	bool rtsp_initialized;
 	bool rtsp_mutex_initialized;
+	bool stats_mutex_initialized;
 	bool vo_thread_started;
 	bool venc_thread_started;
 	bool sub_venc_thread_started;
@@ -69,6 +77,9 @@ typedef struct {
 	rtsp_session_handle rtsp_main_session;
 	rtsp_session_handle rtsp_sub_session;
 	pthread_mutex_t rtsp_mutex;
+	pthread_mutex_t stats_mutex;
+	AiCamStats main_rtsp_stats;
+	AiCamStats sub_rtsp_stats;
 	pthread_t vo_thread;
 	pthread_t venc_thread;
 	pthread_t sub_venc_thread;
@@ -80,6 +91,12 @@ int ai_cam_start(AiCamApp *app);
 void ai_cam_stop(AiCamApp *app);
 void ai_cam_request_stop(AiCamApp *app);
 bool ai_cam_is_stopping(const AiCamApp *app);
+int ai_cam_stats_start(AiCamApp *app);
+void ai_cam_stats_stop(AiCamApp *app);
+void ai_cam_stats_record_rtsp(AiCamApp *app, bool is_main_stream, RK_U64 now_us,
+				      RK_U64 stream_pts);
+void ai_cam_stats_print_period(AiCamApp *app, const AiCamStats *lcd_stats,
+				       RK_U64 elapsed_us);
 
 int ai_cam_isp_start(AiCamApp *app);
 void ai_cam_isp_stop(AiCamApp *app);

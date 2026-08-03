@@ -21,16 +21,86 @@ static RK_U64 ai_cam_now_us(void) {
 	return (RK_U64)time.tv_sec * 1000000 + (RK_U64)time.tv_nsec / 1000;
 }
 
+static void ai_cam_shutdown_checkpoint(const char *stage) {
+	fprintf(stderr, "#Shutdown: %s\n", stage);
+	fflush(stderr);
+}
+
+static void ai_cam_print_rtsp_stats(const char *path, const AiCamStats *stats,
+				    RK_U64 elapsed_us) {
+	printf("#Stats: RTSP %s FPS=%.2f, capture-to-RTSP-submit avg=%.2f ms, max=%.2f ms\n",
+	       path, stats->frame_count / ((double)elapsed_us / 1000000.0),
+	       stats->latency_count ? (double)stats->latency_sum_us / stats->latency_count / 1000.0
+	                            : 0.0,
+	       (double)stats->latency_max_us / 1000.0);
+}
+
+int ai_cam_stats_start(AiCamApp *app) {
+	if (pthread_mutex_init(&app->stats_mutex, NULL) != 0)
+		return RK_FAILURE;
+	app->stats_mutex_initialized = true;
+	memset(&app->main_rtsp_stats, 0, sizeof(app->main_rtsp_stats));
+	memset(&app->sub_rtsp_stats, 0, sizeof(app->sub_rtsp_stats));
+	return RK_SUCCESS;
+}
+
+void ai_cam_stats_stop(AiCamApp *app) {
+	if (!app->stats_mutex_initialized)
+		return;
+	pthread_mutex_destroy(&app->stats_mutex);
+	app->stats_mutex_initialized = false;
+}
+
+void ai_cam_stats_record_rtsp(AiCamApp *app, bool is_main_stream, RK_U64 now_us,
+				      RK_U64 stream_pts) {
+	AiCamStats *stats;
+
+	if (!app->stats_mutex_initialized)
+		return;
+	pthread_mutex_lock(&app->stats_mutex);
+	stats = is_main_stream ? &app->main_rtsp_stats : &app->sub_rtsp_stats;
+	stats->frame_count++;
+	if (now_us >= stream_pts) {
+		RK_U64 latency_us = now_us - stream_pts;
+
+		stats->latency_sum_us += latency_us;
+		if (latency_us > stats->latency_max_us)
+			stats->latency_max_us = latency_us;
+		stats->latency_count++;
+	}
+	pthread_mutex_unlock(&app->stats_mutex);
+}
+
+void ai_cam_stats_print_period(AiCamApp *app, const AiCamStats *lcd_stats,
+				       RK_U64 elapsed_us) {
+	AiCamStats main_stats;
+	AiCamStats sub_stats;
+
+	if (!app->stats_mutex_initialized || !elapsed_us)
+		return;
+	pthread_mutex_lock(&app->stats_mutex);
+	main_stats = app->main_rtsp_stats;
+	sub_stats = app->sub_rtsp_stats;
+	memset(&app->main_rtsp_stats, 0, sizeof(app->main_rtsp_stats));
+	memset(&app->sub_rtsp_stats, 0, sizeof(app->sub_rtsp_stats));
+	pthread_mutex_unlock(&app->stats_mutex);
+
+	ai_cam_print_rtsp_stats("/live/0", &main_stats, elapsed_us);
+	ai_cam_print_rtsp_stats("/live/1", &sub_stats, elapsed_us);
+	printf("#Stats: LCD submit FPS=%.2f, capture-to-VO-submit avg=%.2f ms, max=%.2f ms\n\n\n",
+	       lcd_stats->frame_count / ((double)elapsed_us / 1000000.0),
+	       lcd_stats->latency_count ?
+		       (double)lcd_stats->latency_sum_us / lcd_stats->latency_count / 1000.0 : 0.0,
+	       (double)lcd_stats->latency_max_us / 1000.0);
+}
+
 static void *ai_cam_forward_frames(void *arg) {
 	AiCamApp *app = arg;
 	VIDEO_FRAME_INFO_S vi_frame;
 	VIDEO_FRAME_INFO_S display_frame;
 	RK_U64 stat_start_us = 0;
-	RK_U64 latency_sum_us = 0;
-	RK_U64 latency_max_us = 0;
 	RK_U64 last_vi_frame_us = ai_cam_now_us();
-	RK_U32 frame_count = 0;
-	RK_U32 latency_count = 0;
+	AiCamStats lcd_stats = {0};
 
 	while (!ai_cam_is_stopping(app)) {
 		int ret = RK_MPI_VI_GetChnFrame(AI_CAM_VI_PIPE, app->config.vi_channel,
@@ -64,25 +134,19 @@ static void *ai_cam_forward_frames(void *arg) {
 				RK_U64 now_us = ai_cam_now_us();
 				if (!stat_start_us)
 					stat_start_us = now_us;
-				frame_count++;
+				lcd_stats.frame_count++;
 				if (display_frame.stVFrame.u64PTS > 0 &&
 				    now_us >= display_frame.stVFrame.u64PTS) {
 					RK_U64 latency_us = now_us - display_frame.stVFrame.u64PTS;
-					latency_sum_us += latency_us;
-					if (latency_us > latency_max_us)
-						latency_max_us = latency_us;
-					latency_count++;
+					lcd_stats.latency_sum_us += latency_us;
+					if (latency_us > lcd_stats.latency_max_us)
+						lcd_stats.latency_max_us = latency_us;
+					lcd_stats.latency_count++;
 				}
 				if (now_us - stat_start_us >= 1000000) {
-					printf("#Stats: LCD submit FPS=%.2f, capture-to-VO-submit avg=%.2f ms, max=%.2f ms\n",
-					       frame_count / ((double)(now_us - stat_start_us) / 1000000.0),
-					       latency_count ? (double)latency_sum_us / latency_count / 1000.0 : 0.0,
-					       (double)latency_max_us / 1000.0);
+					ai_cam_stats_print_period(app, &lcd_stats, now_us - stat_start_us);
 					stat_start_us = now_us;
-					latency_sum_us = 0;
-					latency_max_us = 0;
-					frame_count = 0;
-					latency_count = 0;
+					memset(&lcd_stats, 0, sizeof(lcd_stats));
 				}
 			}
 		}
@@ -158,6 +222,9 @@ int ai_cam_start(AiCamApp *app) {
 	ret = ai_cam_rtsp_start(app);
 	if (ret != RK_SUCCESS)
 		goto failed;
+	ret = ai_cam_stats_start(app);
+	if (ret != RK_SUCCESS)
+		goto failed;
 	if (pthread_create(&app->venc_thread, NULL, ai_cam_venc_write_stream, app) != 0) {
 		ret = RK_FAILURE;
 		goto failed;
@@ -187,37 +254,53 @@ failed:
 }
 
 void ai_cam_stop(AiCamApp *app) {
+	ai_cam_shutdown_checkpoint("stop requested");
 	ai_cam_request_stop(app);
 	if (app->vo_thread_started) {
 		if (!app->vo_initialized)
 			pthread_kill(app->vo_thread, SIGINT);
+		ai_cam_shutdown_checkpoint("join VO startup thread");
 		pthread_join(app->vo_thread, NULL);
 		app->vo_thread_started = false;
 	}
 	if (app->forwarding_thread_started) {
+		ai_cam_shutdown_checkpoint("join VI/VPSS/VO forwarding thread");
 		pthread_join(app->forwarding_thread, NULL);
 		app->forwarding_thread_started = false;
 	}
 	if (app->venc_thread_started) {
+		ai_cam_shutdown_checkpoint("join main VENC thread");
 		pthread_join(app->venc_thread, NULL);
 		app->venc_thread_started = false;
 	}
 	if (app->sub_venc_thread_started) {
+		ai_cam_shutdown_checkpoint("join sub VENC thread");
 		pthread_join(app->sub_venc_thread, NULL);
 		app->sub_venc_thread_started = false;
 	}
+	ai_cam_shutdown_checkpoint("stop statistics");
+	ai_cam_stats_stop(app);
+	ai_cam_shutdown_checkpoint("stop RTSP");
 	ai_cam_rtsp_stop(app);
+	ai_cam_shutdown_checkpoint("unbind VPSS/VENC");
 	ai_cam_venc_unbind_vpss(app);
+	ai_cam_shutdown_checkpoint("stop VENC");
 	ai_cam_venc_stop(app);
+	ai_cam_shutdown_checkpoint("stop VO");
 	ai_cam_vo_stop(app);
+	ai_cam_shutdown_checkpoint("stop VPSS");
 	ai_cam_vpss_stop(app);
+	ai_cam_shutdown_checkpoint("stop VI");
 	ai_cam_vi_stop(app);
 	if (app->sys_initialized) {
+		ai_cam_shutdown_checkpoint("exit RK MPI SYS");
 		RK_MPI_SYS_Exit();
 		app->sys_initialized = false;
 	}
 	if (app->isp_initialized) {
+		ai_cam_shutdown_checkpoint("stop ISP");
 		ai_cam_isp_stop(app);
 		app->isp_initialized = false;
 	}
+	ai_cam_shutdown_checkpoint("complete");
 }

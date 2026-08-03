@@ -147,7 +147,7 @@ stop_rkipc() {
 	killall rkipc >/dev/null 2>&1
 
 	count=0
-	while pidof rkipc >/dev/null 2>&1 && [ "$count" -lt 5 ]; do
+	while pidof rkipc >/dev/null 2>&1 && [ "$count" -lt 15 ]; do
 		count=$((count + 1))
 		sleep 1
 	done
@@ -156,6 +156,13 @@ stop_rkipc() {
 		return 1
 	fi
 	sleep 2
+}
+
+unblank_backlight() {
+	backlight_power=/sys/class/backlight/backlight/bl_power
+	if [ -w "$backlight_power" ]; then
+		echo 0 > "$backlight_power"
+	fi
 }
 
 cleanup() {
@@ -181,8 +188,17 @@ fi
 trap on_signal INT TERM
 
 stop_rkipc || exit 1
+unblank_backlight
 
 export LD_LIBRARY_PATH=/oem/usr/lib
+if [ "$restore_default" -eq 0 ]; then
+	# 默认模式不需要在退出后恢复 rkipc，直接替换脚本进程，避免 Ctrl+C 被脚本重复转发。
+	exec "$APP" -a "$iq_dir" \
+		-w "$sensor_width" -h "$sensor_height" -W "$lcd_width" -H "$lcd_height" \
+		-r "$rotation" -I "$isp_index" -l "$vo_layer" -d "$vo_device" \
+		-o "$output"
+fi
+
 "$APP" -a "$iq_dir" \
 	-w "$sensor_width" -h "$sensor_height" -W "$lcd_width" -H "$lcd_height" \
 	-r "$rotation" -I "$isp_index" -l "$vo_layer" -d "$vo_device" \

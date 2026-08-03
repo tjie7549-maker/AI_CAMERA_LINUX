@@ -1,16 +1,11 @@
+#include <errno.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "ai_cam.h"
-
-static volatile sig_atomic_t signal_received;
-
-static void signal_handler(int sig) {
-	(void)sig;
-	signal_received = 1;
-}
 
 static void print_usage(const char *name) {
 	printf("usage: %s [-a iq_dir] [-w vi_width] [-h vi_height] [-W vo_width] "
@@ -20,6 +15,8 @@ static void print_usage(const char *name) {
 
 int main(int argc, char *argv[]) {
 	AiCamApp app = {0};
+	sigset_t shutdown_signals;
+	struct timespec wait_timeout = {0, 50000000};
 	int option;
 
 	ai_cam_default_config(&app.config);
@@ -59,17 +56,31 @@ int main(int argc, char *argv[]) {
 	printf("#RTSP sub: rtsp://0.0.0.0:554/live/1 (%dx%d, %d kbps)\n",
 	       app.config.sub_venc_width, app.config.sub_venc_height,
 	       app.config.sub_venc_bitrate_kbps);
-	signal(SIGINT, signal_handler);
-	signal(SIGTERM, signal_handler);
 	/* An RTSP client may disconnect while a VENC worker is sending a frame. */
 	signal(SIGPIPE, SIG_IGN);
+	sigemptyset(&shutdown_signals);
+	sigaddset(&shutdown_signals, SIGINT);
+	sigaddset(&shutdown_signals, SIGTERM);
+	/*
+	 * Worker threads inherit this mask.  Keep Ctrl+C out of media ioctls and
+	 * consume it synchronously here before starting the orderly shutdown.
+	 */
+	if (pthread_sigmask(SIG_BLOCK, &shutdown_signals, NULL) != 0) {
+		fprintf(stderr, "failed to block shutdown signals\n");
+		return 1;
+	}
 	if (ai_cam_start(&app) != RK_SUCCESS)
 		return 1;
 
 	while (!ai_cam_is_stopping(&app)) {
-		if (signal_received)
+		int signal_number = sigtimedwait(&shutdown_signals, NULL, &wait_timeout);
+
+		if (signal_number == SIGINT || signal_number == SIGTERM)
 			ai_cam_request_stop(&app);
-		usleep(50000);
+		else if (signal_number < 0 && errno != EAGAIN && errno != EINTR) {
+			perror("sigtimedwait");
+			ai_cam_request_stop(&app);
+		}
 	}
 	ai_cam_stop(&app);
 	return app.runtime_failed ? 1 : 0;

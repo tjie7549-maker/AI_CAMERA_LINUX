@@ -109,6 +109,21 @@ stop_children() {
     fi
 }
 
+receiver_is_running() {
+    if ! kill -0 "$receiver_pid" 2>/dev/null; then
+        return 1
+    fi
+
+    # kill -0 succeeds for an exited child until wait() reaps its zombie PID.
+    # Treat that state as stopped so a failed RTSP connection cannot leave the
+    # monitor loop waiting forever.
+    receiver_state=$(ps -o stat= -p "$receiver_pid" 2>/dev/null || true)
+    case "$receiver_state" in
+        *Z*) return 1 ;;
+    esac
+    return 0
+}
+
 on_signal() {
     echo
     echo "Stopping receiver and Qwen monitor..."
@@ -138,7 +153,7 @@ echo "Result: $LATEST_RESULT"
 echo "Logs: $RECEIVER_LOG, $WATCHER_LOG"
 
 last_fingerprint=""
-while kill -0 "$receiver_pid" 2>/dev/null; do
+while receiver_is_running; do
     if [ -f "$LATEST_RESULT" ]; then
         fingerprint=$(stat -c '%Y:%s' "$LATEST_RESULT" 2>/dev/null || true)
         if [ -n "$fingerprint" ] && [ "$fingerprint" != "$last_fingerprint" ]; then
@@ -172,4 +187,8 @@ echo
 echo "Receiver finished with exit code $receiver_status"
 echo "Receiver log: $RECEIVER_LOG"
 echo "Qwen log: $WATCHER_LOG"
+if [ "$receiver_status" -ne 0 ] && [ -s "$RECEIVER_LOG" ]; then
+    echo "Receiver error:" >&2
+    tail -n 20 "$RECEIVER_LOG" >&2
+fi
 exit "$receiver_status"

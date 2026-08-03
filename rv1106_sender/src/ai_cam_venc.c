@@ -184,11 +184,7 @@ static void *ai_cam_write_venc_stream(AiCamApp *app, VENC_CHN venc_channel,
 	VENC_STREAM_S stream;
 	VENC_PACK_S packs[AI_CAM_MAX_VENC_PACKS];
 	FILE *file = NULL;
-	RK_S32 frame_count = 0;
-	RK_U64 stat_start_us = 0;
-	RK_U64 latency_sum_us = 0;
-	RK_U64 latency_max_us = 0;
-	RK_U32 latency_count = 0;
+	RK_S32 encoded_frame_count = 0;
 
 	if (output_path) {
 		file = fopen(output_path, "wb");
@@ -237,35 +233,15 @@ static void *ai_cam_write_venc_stream(AiCamApp *app, VENC_CHN venc_channel,
 		}
 		if (stream_pts) {
 			RK_U64 now_us = ai_cam_now_us();
-			if (!stat_start_us)
-				stat_start_us = now_us;
-			if (now_us >= stream_pts) {
-				RK_U64 latency_us = now_us - stream_pts;
-				latency_sum_us += latency_us;
-				if (latency_us > latency_max_us)
-					latency_max_us = latency_us;
-				latency_count++;
-			}
-			if (now_us - stat_start_us >= 1000000) {
-				printf("#Stats: RTSP %s FPS=%.2f, capture-to-RTSP-submit avg=%.2f ms, max=%.2f ms\n",
-				       output_path ? "/live/0" : "/live/1",
-				       frame_count / ((double)(now_us - stat_start_us) / 1000000.0),
-				       latency_count ? (double)latency_sum_us / latency_count / 1000.0 : 0.0,
-				       (double)latency_max_us / 1000.0);
-				stat_start_us = now_us;
-				latency_sum_us = 0;
-				latency_max_us = 0;
-				latency_count = 0;
-				frame_count = 0;
-			}
+			ai_cam_stats_record_rtsp(app, output_path != NULL, now_us, stream_pts);
 		}
 		ret = RK_MPI_VENC_ReleaseStream(venc_channel, &stream);
 		if (ret != RK_SUCCESS)
 			RK_LOGE("RK_MPI_VENC_ReleaseStream(%d) failed, ret = %x", venc_channel, ret);
 
-		frame_count++;
+		encoded_frame_count++;
 		if (stop_at_limit && app->config.venc_frame_limit >= 0 &&
-		    frame_count >= app->config.venc_frame_limit)
+		    encoded_frame_count >= app->config.venc_frame_limit)
 			ai_cam_request_stop(app);
 	}
 
