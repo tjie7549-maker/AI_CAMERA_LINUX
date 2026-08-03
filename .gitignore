@@ -1,1 +1,12 @@
+# RV1106 build output
 /out/
+rv1106_sender/out/
+
+# ROCK 2A build output and runtime data
+rock2a_receiver/build/
+rock2a_receiver/.venv-qwen/
+rock2a_receiver/artifacts/
+rock2a_receiver/runtime/
+
+# Local editor configuration
+*.code-workspace

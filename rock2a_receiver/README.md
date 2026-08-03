@@ -54,7 +54,7 @@ sudo apt install -y build-essential cmake pkg-config \
 编译接收程序：
 
 ```sh
-cd /home/radxa/rock2a_rtsp_receiver
+cd /home/radxa/AI_CAMERA_LINUX/rock2a_receiver
 mkdir -p build
 cd build
 cmake ..
@@ -64,7 +64,7 @@ cmake --build . -j"$(nproc)"
 创建千问 Python 环境：
 
 ```sh
-cd /home/radxa/rock2a_rtsp_receiver
+cd /home/radxa/AI_CAMERA_LINUX/rock2a_receiver
 python3 -m venv .venv-qwen
 . .venv-qwen/bin/activate
 python -m pip install --upgrade pip
@@ -84,7 +84,7 @@ pip install -r tools/qwen_vision/requirements.txt
 在 RV1106 已经运行推流的前提下，ROCK 2A 执行：
 
 ```sh
-cd /home/radxa/rock2a_rtsp_receiver
+cd /home/radxa/AI_CAMERA_LINUX/rock2a_receiver
 ./run_ai_monitor.sh
 ```
 
@@ -115,23 +115,23 @@ cd /home/radxa/rock2a_rtsp_receiver
 
 ```text
 最新图片：
-/home/radxa/rock2a_rtsp_receiver/runtime/ai_cam/latest.jpg
+/home/radxa/AI_CAMERA_LINUX/rock2a_receiver/runtime/ai_cam/latest.jpg
 
 最新识别结果：
-/home/radxa/rock2a_rtsp_receiver/runtime/ai_cam/latest_result.json
+/home/radxa/AI_CAMERA_LINUX/rock2a_receiver/runtime/ai_cam/latest_result.json
 
 C++ 接收日志：
-/home/radxa/rock2a_rtsp_receiver/runtime/ai_cam/receiver.log
+/home/radxa/AI_CAMERA_LINUX/rock2a_receiver/runtime/ai_cam/receiver.log
 
 千问监控日志：
-/home/radxa/rock2a_rtsp_receiver/runtime/ai_cam/qwen_watch.log
+/home/radxa/AI_CAMERA_LINUX/rock2a_receiver/runtime/ai_cam/qwen_watch.log
 ```
 
 格式化查看最新识别结果：
 
 ```sh
 python3 -m json.tool \
-  /home/radxa/rock2a_rtsp_receiver/runtime/ai_cam/latest_result.json
+  /home/radxa/AI_CAMERA_LINUX/rock2a_receiver/runtime/ai_cam/latest_result.json
 ```
 
 ## 手动运行
@@ -139,7 +139,7 @@ python3 -m json.tool \
 仅验证 RTSP 解码与 JPEG：
 
 ```sh
-cd /home/radxa/rock2a_rtsp_receiver
+cd /home/radxa/AI_CAMERA_LINUX/rock2a_receiver
 ./build/rock2a_rtsp_receiver \
   --url rtsp://192.168.50.2:554/live/1 \
   --output artifacts/frames/manual \

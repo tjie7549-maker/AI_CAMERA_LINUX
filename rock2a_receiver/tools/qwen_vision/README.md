@@ -24,8 +24,8 @@ python tools/qwen_vision/test_fixed_image.py --image /path/to/frame.jpg
 
 ```sh
 python tools/qwen_vision/watch_latest_image.py \
-  --image /home/radxa/rock2a_rtsp_receiver/runtime/ai_cam/latest.jpg \
-  --result /home/radxa/rock2a_rtsp_receiver/runtime/ai_cam/latest_result.json \
+  --image /home/radxa/AI_CAMERA_LINUX/rock2a_receiver/runtime/ai_cam/latest.jpg \
+  --result /home/radxa/AI_CAMERA_LINUX/rock2a_receiver/runtime/ai_cam/latest_result.json \
   --interval-ms 5000
 ```
 

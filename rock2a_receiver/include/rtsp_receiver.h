@@ -21,7 +21,7 @@ struct SwsContext;
 class RtspReceiver {
 public:
     struct Config {
-        std::string url = "rtsp://192.168.63.2:554/live/1";
+        std::string url = "rtsp://192.168.50.2:554/live/1";
         std::string output_dir = "./frames";
         int snapshot_interval_ms = 1000;
         std::string latest_image_path;

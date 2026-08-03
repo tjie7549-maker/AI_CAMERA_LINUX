@@ -1,6 +1,5 @@
 # Build the RV1106 VI-to-LCD demo from this directory.
-#scp /home/summary/linux/ai_cam/out/simple_vi_get_frame_send_vo_rv1106 run_simple_isp_vi_to_lcd_rv1106.sh root@172.32.0.93:/root/userdata
-SDK_DIR ?= ../luckfox-pico
+SDK_DIR ?= ../../luckfox-pico
 MEDIA_PARAM ?= $(SDK_DIR)/media/Makefile.param
 TOOLCHAIN_DIR ?= $(SDK_DIR)/tools/linux/toolchain/arm-rockchip830-linux-uclibcgnueabihf/bin
 RK_MEDIA_CROSS ?= $(TOOLCHAIN_DIR)/arm-rockchip830-linux-uclibcgnueabihf
