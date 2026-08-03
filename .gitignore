@@ -1,0 +1,10 @@
+qwen.env
+.env
+*.env
+.venv-qwen/
+__pycache__/
+*.pyc
+build/
+artifacts/
+runtime/
+*.code-workspace
