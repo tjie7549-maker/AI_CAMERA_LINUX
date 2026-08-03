@@ -60,11 +60,22 @@ make SDK_DIR=/path/to/luckfox-pico
 ```text
 rv1106_sender/out/simple_vi_get_frame_send_vo_rv1106
 rv1106_sender/out/run_simple_isp_vi_to_lcd_rv1106.sh
+rv1106_sender/out/run_ai_sender.sh
 ```
 
 ## 板端运行
 
-运行脚本会停止 `rkipc`，使用默认的 ISP、LCD 与 RTSP 参数，并将本地 H.264 文件输出关闭：
+AI 识别流程的发送端一键启动：
+
+```sh
+cd /root/userdata
+./run_ai_sender.sh
+```
+
+默认启动 2304x1296 摄像头、180 度旋转的 720x720 LCD 和双路 RTSP。传入参数可覆盖默认值，例如
+`./run_ai_sender.sh --rotation 0`。按 Ctrl+C 正常停止媒体管线。
+
+底层运行脚本会停止 `rkipc`，使用默认的 ISP、LCD 与 RTSP 参数，并将本地 H.264 文件输出关闭：
 
 ```sh
 cd /root/userdata

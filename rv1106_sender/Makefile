@@ -15,7 +15,7 @@ include $(MEDIA_PARAM)
 
 TARGET := simple_vi_get_frame_send_vo_rv1106
 SOURCES := $(wildcard src/*.c)
-SCRIPT := run_simple_isp_vi_to_lcd_rv1106.sh
+SCRIPTS := run_simple_isp_vi_to_lcd_rv1106.sh run_ai_sender.sh
 OUT_DIR := out
 
 CC := $(RK_MEDIA_CROSS)-gcc
@@ -42,7 +42,7 @@ LDLIBS := -lrockchip_mpp -lrga -ldrm -lpthread -lstdc++ -lrockit_full -lrkaiq -l
 
 .PHONY: all clean help
 
-all: $(OUT_DIR)/$(TARGET) $(OUT_DIR)/$(SCRIPT)
+all: $(OUT_DIR)/$(TARGET) $(SCRIPTS:%=$(OUT_DIR)/%)
 
 $(OUT_DIR):
 	@mkdir -p $@
@@ -50,7 +50,7 @@ $(OUT_DIR):
 $(OUT_DIR)/$(TARGET): $(SOURCES) | $(OUT_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(SOURCES) -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(OUT_DIR)/$(SCRIPT): $(SCRIPT) | $(OUT_DIR)
+$(OUT_DIR)/%: % | $(OUT_DIR)
 	install -m 755 $< $@
 
 clean:

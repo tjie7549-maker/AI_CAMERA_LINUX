@@ -27,7 +27,7 @@ ROCK 2A 网线地址：192.168.50.1
 ## 目录结构
 
 ```text
-rock2a_rtsp_receiver/
+rock2a_receiver/
 ├── src/                    C++ RTSP 接收、解码与 JPEG 写入
 ├── include/                C++ 头文件
 ├── tools/qwen_vision/      千问视觉 Python 模块
@@ -35,6 +35,7 @@ rock2a_rtsp_receiver/
 ├── artifacts/frames/       历史和后续测试图片
 ├── runtime/ai_cam/         最新图片、识别结果与运行日志
 ├── run_ai_monitor.sh       一键接收与识别脚本
+├── run_ai_pipeline.sh      自动编译后持续启动识别的入口脚本
 └── .venv-qwen/             独立 Python 虚拟环境
 ```
 
@@ -85,10 +86,10 @@ pip install -r tools/qwen_vision/requirements.txt
 
 ```sh
 cd /home/radxa/AI_CAMERA_LINUX/rock2a_receiver
-./run_ai_monitor.sh
+./run_ai_pipeline.sh
 ```
 
-默认运行 300 秒。脚本会：
+该脚本会在需要时配置 CMake，并始终重新编译接收端；随后持续运行，按 Ctrl+C 正常停止。它会：
 
 1. 接收 `rtsp://192.168.50.2:554/live/1`。
 2. 每 5 秒保存一张普通 JPEG 到 `artifacts/frames/ai_monitor/`。
@@ -102,6 +103,8 @@ cd /home/radxa/AI_CAMERA_LINUX/rock2a_receiver
 ```sh
 ./run_ai_monitor.sh --duration 0
 ```
+
+`run_ai_monitor.sh` 保留为底层启动脚本，适合需要自定义测试时长的场景；`run_ai_pipeline.sh` 是日常一键入口。
 
 覆盖 RTSP 地址：
 

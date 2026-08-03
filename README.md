@@ -36,6 +36,9 @@ make
 ROCK 2A 接收与识别端的构建、配置和一键运行方式见 `rock2a_receiver/README.md`。
 系统架构与两端职责见 [docs/architecture.md](docs/architecture.md)。
 
+日常启动时，RV1106 在 `/root/userdata` 执行 `./run_ai_sender.sh`；ROCK 2A 在
+`/home/radxa/AI_CAMERA_LINUX/rock2a_receiver` 执行 `./run_ai_pipeline.sh`。
+
 ## 仓库规则
 
 - 两端各自独立构建，不共享二进制产物。
