@@ -7,6 +7,8 @@
 
 class QLabel;
 class QTimer;
+class VideoWidget;
+class QImage;
 
 class MainWindow : public QWidget {
     Q_OBJECT
@@ -20,6 +22,10 @@ public slots:
     void updateCurrentTime();
     void updateAiState(const QString &state);
     void updateError(const QString &message);
+    void updatePreviewFrame(const QImage &image, qulonglong frameId,
+                            qulonglong sourceTimeNs);
+    void updatePreviewState(int state);
+    void updatePreviewStats(const QString &line1, const QString &line2);
 
 private:
     void buildUi();
@@ -32,6 +38,9 @@ private:
     QLabel *videoStatusLabel_;
     QLabel *aiStatusLabel_;
     QLabel *modelLabel_;
+    VideoWidget *videoWidget_;
+    QLabel *videoInfo_;
+    QLabel *videoWaiting_;
 
     QLabel *sceneValue_;
     QLabel *peopleValue_;

@@ -15,7 +15,7 @@ include $(MEDIA_PARAM)
 
 TARGET := simple_vi_get_frame_send_vo_rv1106
 SOURCES := $(wildcard src/*.c)
-SCRIPTS := run_simple_isp_vi_to_lcd_rv1106.sh run_ai_sender.sh
+SCRIPTS := run_simple_isp_vi_to_lcd_rv1106.sh run_ai_sender.sh run_ai_headless_preview.sh run_ai_terminal.sh
 OUT_DIR := out
 
 CC := $(RK_MEDIA_CROSS)-gcc
@@ -38,7 +38,7 @@ LDFLAGS := \
 	-L$(RK_MEDIA_OUTPUT)/lib \
 	-L$(RK_MEDIA_OUTPUT)/root/usr/lib \
 	-Wl,--gc-sections -Wl,--as-needed
-LDLIBS := -lrockchip_mpp -lrga -ldrm -lpthread -lstdc++ -lrockit_full -lrkaiq -lrtsp
+LDLIBS := -lrockchip_mpp -lrga -ldrm -lpthread -lstdc++ -lrockit_full -lrkaiq -lrtsp -lrt
 
 .PHONY: all clean help
 

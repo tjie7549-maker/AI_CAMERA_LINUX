@@ -10,10 +10,11 @@
 ISP -> VI (2304x1296 NV12) -> VPSS
                               |- ch0: 中心裁剪为 1296x1296 -> 缩放到 720x720 -> LCD
                               |- ch1: 保持 16:9 -> 1280x720 NV12 -> H.264 VENC -> RTSP /live/0
-                              `- ch2: 保持 16:9 -> 640x360 NV12 -> H.264 VENC -> RTSP /live/1
+                              |- ch2: 保持 16:9 -> 640x360 NV12 -> H.264 VENC -> RTSP /live/1
+                              `- ch3: 384x216 NV12 -> RGA -> 两块 CMA DMA-BUF -> Qt 实时预览
 ```
 
-LCD 分支使用中心裁剪，人物不会因 16:9 画面直接压缩到正方形屏幕而变形；两个编码分支均保留完整的 16:9 画面。
+LCD 分支使用中心裁剪，人物不会因 16:9 画面直接压缩到正方形屏幕而变形；两个编码分支均保留完整的 16:9 画面。在 Qt 实时预览模式中，VO 被显式关闭，由 Qt 独占 DRM/LCD，因此不会与 VO 争抢屏幕。
 
 RTSP 地址：
 
@@ -34,7 +35,10 @@ src/ai_cam_vpss.c      LCD 裁剪分支与编码分支
 src/ai_cam_vo.c        LCD/VO 生命周期
 src/ai_cam_venc.c      H.264 编码、VPSS 绑定、码流写文件与 RTSP 发送
 src/ai_cam_rtsp.c      RTSP 服务与 /live/0、/live/1 会话生命周期
+src/ai_cam_preview.c   VPSS ch3 、RGA、CMA DMA-BUF 预览生产者
+include/preview_shm_protocol.h  Qt 与发送端共享的预览协议
 run_simple_isp_vi_to_lcd_rv1106.sh  板端运行脚本
+run_ai_headless_preview.sh  Qt 预览的 no-VO 发送端脚本
 README.md              工程说明
 ```
 
@@ -61,9 +65,27 @@ make SDK_DIR=/path/to/luckfox-pico
 rv1106_sender/out/simple_vi_get_frame_send_vo_rv1106
 rv1106_sender/out/run_simple_isp_vi_to_lcd_rv1106.sh
 rv1106_sender/out/run_ai_sender.sh
+rv1106_sender/out/run_ai_terminal.sh
 ```
 
 ## 板端运行
+
+智能视觉终端使用统一部署目录 `/root/userdata/ai_camera/`，一键启动摄像头、RTSP 和 Qt LCD：
+
+```sh
+cd /root/userdata/ai_camera
+./run_ai_terminal.sh
+```
+
+脚本先启动 no-VO 发送端，等待 DMA-BUF 预览套接字就绪后再启动 Qt。Ctrl+C 时先正常停止 Qt，再向发送端发送 `SIGINT`，不使用强制结束。日志统一位于 `/root/userdata/ai_camera/logs/`。
+在 Ubuntu 上调试中可以使用统一部署脚本：
+
+```sh
+cd rv1106_sender
+./deploy_ai_terminal.sh
+```
+
+## 兼容启动方式
 
 AI 识别流程的发送端一键启动：
 
@@ -140,3 +162,16 @@ ffplay -fflags nobuffer -flags low_delay -framedrop \
 ```
 
 子码流地址为 `rtsp://192.168.50.2:554/live/1`。
+
+## Qt 实时预览模式
+
+该模式用于让 Qt 界面显示实时摄像头画面，启动时必须关闭 VO：
+
+```sh
+cd /root/userdata
+./run_ai_headless_preview.sh --output /dev/null
+```
+
+默认预览为 384x216 RGB888，目标 15 FPS。帧像素存在两块 RK MMZ/CMA DMA-BUF 中；`/ai_cam_preview` 仅保存帧序号和尺寸等元数据，不承载像素。两个 DMA-BUF 文件描述符通过 `/tmp/ai_cam_preview.sock` 发给 Qt 接收端。
+
+已验证：150 帧冒烟测试中 RGA 无报错，实际预览约 14.5--15.5 FPS，两路 RTSP 仍分别稳定于约 25 FPS 和 20 FPS。使用 Ctrl+C 停止发送端，程序会先停止预览线程，再依次释放编码、VPSS、VI 和 ISP。

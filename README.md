@@ -47,11 +47,21 @@ cd rv1106_ai_ui
 ./scripts/deploy.sh
 ```
 
-Qt 与 RKMPI VO 不能同时占用 LCD。运行 `rv1106_ai_ui` 前必须正常停止发送端，
-退出 Qt 后再执行 `./run_ai_sender.sh` 恢复摄像头显示和 RTSP。
+Qt 与 RKMPI VO 不能同时占用 LCD。智能视觉模式中使用 no-VO 发送端，由 Qt 独占 LCD；发送端通过 CMA DMA-BUF 把实时预览帧传给 Qt。
 
-日常启动时，RV1106 在 `/root/userdata` 执行 `./run_ai_sender.sh`；ROCK 2A 在
-`/home/radxa/AI_CAMERA_LINUX/rock2a_receiver` 执行 `./run_ai_pipeline.sh`。
+日常启动只需两个终端：
+
+```sh
+# ROCK 2A：RTSP 接收、千问识别、TCP 结果回传
+cd /home/radxa/AI_CAMERA_LINUX/rock2a_receiver
+./run_ai_pipeline.sh
+
+# RV1106：摄像头、RTSP、Qt LCD
+cd /root/userdata/ai_camera
+./run_ai_terminal.sh
+```
+
+两边均按 Ctrl+C 正常停止。ROCK 2A 脚本自动监听 `0.0.0.0:9000`，Qt 默认连接 `192.168.50.1:9000`。
 
 ## 仓库规则
 

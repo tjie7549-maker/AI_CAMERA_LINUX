@@ -87,11 +87,14 @@ void ai_cam_stats_print_period(AiCamApp *app, const AiCamStats *lcd_stats,
 
 	ai_cam_print_rtsp_stats("/live/0", &main_stats, elapsed_us);
 	ai_cam_print_rtsp_stats("/live/1", &sub_stats, elapsed_us);
-	printf("#Stats: LCD submit FPS=%.2f, capture-to-VO-submit avg=%.2f ms, max=%.2f ms\n\n\n",
-	       lcd_stats->frame_count / ((double)elapsed_us / 1000000.0),
-	       lcd_stats->latency_count ?
-		       (double)lcd_stats->latency_sum_us / lcd_stats->latency_count / 1000.0 : 0.0,
-	       (double)lcd_stats->latency_max_us / 1000.0);
+	if (lcd_stats) {
+		printf("#Stats: LCD submit FPS=%.2f, capture-to-VO-submit avg=%.2f ms, max=%.2f ms\n",
+		       lcd_stats->frame_count / ((double)elapsed_us / 1000000.0),
+		       lcd_stats->latency_count ?
+			       (double)lcd_stats->latency_sum_us / lcd_stats->latency_count / 1000.0 : 0.0,
+		       (double)lcd_stats->latency_max_us / 1000.0);
+	}
+	printf("\n\n");
 }
 
 static void *ai_cam_forward_frames(void *arg) {
@@ -119,39 +122,45 @@ static void *ai_cam_forward_frames(void *arg) {
 		RK_MPI_VI_ReleaseChnFrame(AI_CAM_VI_PIPE, app->config.vi_channel, &vi_frame);
 		if (ret != RK_SUCCESS)
 			continue;
+		if (!stat_start_us)
+			stat_start_us = ai_cam_now_us();
 
-		ret = RK_MPI_VPSS_GetChnFrame(AI_CAM_VPSS_GRP, AI_CAM_VPSS_DISPLAY_CHN,
-		                              &display_frame, AI_CAM_WAIT_MS);
-		if (ret != RK_SUCCESS)
-			continue;
+		if (app->config.enable_vo) {
+			ret = RK_MPI_VPSS_GetChnFrame(AI_CAM_VPSS_GRP, AI_CAM_VPSS_DISPLAY_CHN,
+			                              &display_frame, AI_CAM_WAIT_MS);
+			if (ret != RK_SUCCESS)
+				goto print_stats;
+			if (app->vo_initialized) {
+				ret = RK_MPI_VO_SendFrame(app->config.vo_layer, app->config.vo_channel,
+				                          &display_frame, AI_CAM_WAIT_MS);
+				if (ret != RK_SUCCESS && !ai_cam_is_stopping(app))
+					RK_LOGE("RK_MPI_VO_SendFrame failed, ret = %x", ret);
+				if (ret == RK_SUCCESS) {
+					RK_U64 now_us = ai_cam_now_us();
 
-		if (app->vo_initialized) {
-			ret = RK_MPI_VO_SendFrame(app->config.vo_layer, app->config.vo_channel,
-			                          &display_frame, AI_CAM_WAIT_MS);
-			if (ret != RK_SUCCESS && !ai_cam_is_stopping(app))
-				RK_LOGE("RK_MPI_VO_SendFrame failed, ret = %x", ret);
-			if (ret == RK_SUCCESS) {
-				RK_U64 now_us = ai_cam_now_us();
-				if (!stat_start_us)
-					stat_start_us = now_us;
-				lcd_stats.frame_count++;
-				if (display_frame.stVFrame.u64PTS > 0 &&
-				    now_us >= display_frame.stVFrame.u64PTS) {
-					RK_U64 latency_us = now_us - display_frame.stVFrame.u64PTS;
-					lcd_stats.latency_sum_us += latency_us;
-					if (latency_us > lcd_stats.latency_max_us)
-						lcd_stats.latency_max_us = latency_us;
-					lcd_stats.latency_count++;
-				}
-				if (now_us - stat_start_us >= 1000000) {
-					ai_cam_stats_print_period(app, &lcd_stats, now_us - stat_start_us);
-					stat_start_us = now_us;
-					memset(&lcd_stats, 0, sizeof(lcd_stats));
+					lcd_stats.frame_count++;
+					if (display_frame.stVFrame.u64PTS > 0 &&
+					    now_us >= display_frame.stVFrame.u64PTS) {
+						RK_U64 latency_us = now_us - display_frame.stVFrame.u64PTS;
+
+						lcd_stats.latency_sum_us += latency_us;
+						if (latency_us > lcd_stats.latency_max_us)
+							lcd_stats.latency_max_us = latency_us;
+						lcd_stats.latency_count++;
+					}
 				}
 			}
+			RK_MPI_VPSS_ReleaseChnFrame(AI_CAM_VPSS_GRP, AI_CAM_VPSS_DISPLAY_CHN,
+			                            &display_frame);
 		}
-		RK_MPI_VPSS_ReleaseChnFrame(AI_CAM_VPSS_GRP, AI_CAM_VPSS_DISPLAY_CHN,
-		                            &display_frame);
+
+print_stats:
+		if (ai_cam_now_us() - stat_start_us >= 1000000) {
+			ai_cam_stats_print_period(app, app->config.enable_vo ? &lcd_stats : NULL,
+						     ai_cam_now_us() - stat_start_us);
+			stat_start_us = ai_cam_now_us();
+			memset(&lcd_stats, 0, sizeof(lcd_stats));
+		}
 	}
 	return NULL;
 }
@@ -186,6 +195,10 @@ void ai_cam_default_config(AiCamConfig *config) {
 	config->sub_venc_fps = 20;
 	config->sub_venc_bitrate_kbps = 1024;
 	config->venc_frame_limit = -1;
+	config->enable_vo = true;
+	config->preview_width = 384;
+	config->preview_height = 216;
+	config->preview_fps = 15;
 }
 
 void ai_cam_request_stop(AiCamApp *app) {
@@ -240,11 +253,18 @@ int ai_cam_start(AiCamApp *app) {
 		goto failed;
 	}
 	app->forwarding_thread_started = true;
-	if (pthread_create(&app->vo_thread, NULL, ai_cam_start_vo, app) != 0) {
-		ret = RK_FAILURE;
-		goto failed;
+	if (app->config.preview_shm_name) {
+		ret = ai_cam_preview_start(app);
+		if (ret != RK_SUCCESS)
+			goto failed;
 	}
-	app->vo_thread_started = true;
+	if (app->config.enable_vo) {
+		if (pthread_create(&app->vo_thread, NULL, ai_cam_start_vo, app) != 0) {
+			ret = RK_FAILURE;
+			goto failed;
+		}
+		app->vo_thread_started = true;
+	}
 	return RK_SUCCESS;
 
 failed:
@@ -268,6 +288,10 @@ void ai_cam_stop(AiCamApp *app) {
 		pthread_join(app->forwarding_thread, NULL);
 		app->forwarding_thread_started = false;
 	}
+	if (app->preview_initialized) {
+		ai_cam_shutdown_checkpoint("stop preview producer");
+		ai_cam_preview_stop(app);
+	}
 	if (app->venc_thread_started) {
 		ai_cam_shutdown_checkpoint("join main VENC thread");
 		pthread_join(app->venc_thread, NULL);
@@ -286,8 +310,10 @@ void ai_cam_stop(AiCamApp *app) {
 	ai_cam_venc_unbind_vpss(app);
 	ai_cam_shutdown_checkpoint("stop VENC");
 	ai_cam_venc_stop(app);
-	ai_cam_shutdown_checkpoint("stop VO");
-	ai_cam_vo_stop(app);
+	if (app->config.enable_vo) {
+		ai_cam_shutdown_checkpoint("stop VO");
+		ai_cam_vo_stop(app);
+	}
 	ai_cam_shutdown_checkpoint("stop VPSS");
 	ai_cam_vpss_stop(app);
 	ai_cam_shutdown_checkpoint("stop VI");

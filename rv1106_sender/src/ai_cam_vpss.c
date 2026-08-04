@@ -12,6 +12,10 @@ int ai_cam_vpss_start(AiCamApp *app) {
 	                app->config.vi_width : app->config.vi_height;
 	int crop_x;
 	int crop_y;
+	bool display_enabled = false;
+	bool encode_enabled = false;
+	bool sub_encode_enabled = false;
+	bool preview_enabled = false;
 	int ret;
 
 	crop_size &= ~1;
@@ -32,34 +36,37 @@ int ai_cam_vpss_start(AiCamApp *app) {
 	if (ret != RK_SUCCESS)
 		return ret;
 
-	memset(&crop, 0, sizeof(crop));
-	crop.bEnable = RK_TRUE;
-	crop.enCropCoordinate = VPSS_CROP_ABS_COOR;
-	crop.stCropRect.s32X = crop_x;
-	crop.stCropRect.s32Y = crop_y;
-	crop.stCropRect.u32Width = crop_size;
-	crop.stCropRect.u32Height = crop_size;
-	ret = RK_MPI_VPSS_SetChnCrop(AI_CAM_VPSS_GRP, AI_CAM_VPSS_DISPLAY_CHN, &crop);
-	if (ret != RK_SUCCESS)
-		goto failed_destroy;
+	if (app->config.enable_vo) {
+		memset(&crop, 0, sizeof(crop));
+		crop.bEnable = RK_TRUE;
+		crop.enCropCoordinate = VPSS_CROP_ABS_COOR;
+		crop.stCropRect.s32X = crop_x;
+		crop.stCropRect.s32Y = crop_y;
+		crop.stCropRect.u32Width = crop_size;
+		crop.stCropRect.u32Height = crop_size;
+		ret = RK_MPI_VPSS_SetChnCrop(AI_CAM_VPSS_GRP, AI_CAM_VPSS_DISPLAY_CHN, &crop);
+		if (ret != RK_SUCCESS)
+			goto failed_destroy;
 
-	memset(&chn_attr, 0, sizeof(chn_attr));
-	chn_attr.enChnMode = VPSS_CHN_MODE_USER;
-	chn_attr.enDynamicRange = DYNAMIC_RANGE_SDR8;
-	chn_attr.enPixelFormat = RK_FMT_YUV420SP;
-	chn_attr.stFrameRate.s32SrcFrameRate = -1;
-	chn_attr.stFrameRate.s32DstFrameRate = -1;
-	chn_attr.u32Width = app->config.vo_width;
-	chn_attr.u32Height = app->config.vo_height;
-	chn_attr.enCompressMode = COMPRESS_MODE_NONE;
-	chn_attr.u32Depth = 2;
-	chn_attr.u32FrameBufCnt = 3;
-	ret = RK_MPI_VPSS_SetChnAttr(AI_CAM_VPSS_GRP, AI_CAM_VPSS_DISPLAY_CHN, &chn_attr);
-	if (ret != RK_SUCCESS)
-		goto failed_destroy;
-	ret = RK_MPI_VPSS_EnableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_DISPLAY_CHN);
-	if (ret != RK_SUCCESS)
-		goto failed_destroy;
+		memset(&chn_attr, 0, sizeof(chn_attr));
+		chn_attr.enChnMode = VPSS_CHN_MODE_USER;
+		chn_attr.enDynamicRange = DYNAMIC_RANGE_SDR8;
+		chn_attr.enPixelFormat = RK_FMT_YUV420SP;
+		chn_attr.stFrameRate.s32SrcFrameRate = -1;
+		chn_attr.stFrameRate.s32DstFrameRate = -1;
+		chn_attr.u32Width = app->config.vo_width;
+		chn_attr.u32Height = app->config.vo_height;
+		chn_attr.enCompressMode = COMPRESS_MODE_NONE;
+		chn_attr.u32Depth = 2;
+		chn_attr.u32FrameBufCnt = 3;
+		ret = RK_MPI_VPSS_SetChnAttr(AI_CAM_VPSS_GRP, AI_CAM_VPSS_DISPLAY_CHN, &chn_attr);
+		if (ret != RK_SUCCESS)
+			goto failed_destroy;
+		ret = RK_MPI_VPSS_EnableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_DISPLAY_CHN);
+		if (ret != RK_SUCCESS)
+			goto failed_destroy;
+		display_enabled = true;
+	}
 
 	/* 新增VPSS ch1编码分路：保留 16:9，输出 1280×720 H.264。 */
 	memset(&chn_attr, 0, sizeof(chn_attr));
@@ -75,16 +82,17 @@ int ai_cam_vpss_start(AiCamApp *app) {
 	chn_attr.u32FrameBufCnt = 3;
 	ret = RK_MPI_VPSS_SetChnAttr(AI_CAM_VPSS_GRP, AI_CAM_VPSS_ENCODE_CHN, &chn_attr);
 	if (ret != RK_SUCCESS)
-		goto failed_display;
+		goto failed;
 
 	memset(&crop, 0, sizeof(crop));
 	crop.bEnable = RK_FALSE;
 	ret = RK_MPI_VPSS_SetChnCrop(AI_CAM_VPSS_GRP, AI_CAM_VPSS_ENCODE_CHN, &crop);
 	if (ret != RK_SUCCESS)
-		goto failed_display;
+		goto failed;
 	ret = RK_MPI_VPSS_EnableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_ENCODE_CHN);
 	if (ret != RK_SUCCESS)
-		goto failed_display;
+		goto failed;
+	encode_enabled = true;
 
 	memset(&chn_attr, 0, sizeof(chn_attr));
 	chn_attr.enChnMode = VPSS_CHN_MODE_USER;
@@ -100,35 +108,71 @@ int ai_cam_vpss_start(AiCamApp *app) {
 	ret = RK_MPI_VPSS_SetChnAttr(AI_CAM_VPSS_GRP, AI_CAM_VPSS_SUB_ENCODE_CHN,
 	                             &chn_attr);
 	if (ret != RK_SUCCESS)
-		goto failed_encode;
+		goto failed;
 	memset(&crop, 0, sizeof(crop));
 	crop.bEnable = RK_FALSE;
 	ret = RK_MPI_VPSS_SetChnCrop(AI_CAM_VPSS_GRP, AI_CAM_VPSS_SUB_ENCODE_CHN,
 	                             &crop);
 	if (ret != RK_SUCCESS)
-		goto failed_encode;
+		goto failed;
 	ret = RK_MPI_VPSS_EnableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_SUB_ENCODE_CHN);
 	if (ret != RK_SUCCESS)
-		goto failed_sub_encode;
+		goto failed;
+	sub_encode_enabled = true;
+
+	if (app->config.preview_shm_name) {
+		memset(&chn_attr, 0, sizeof(chn_attr));
+		chn_attr.enChnMode = VPSS_CHN_MODE_USER;
+		chn_attr.enDynamicRange = DYNAMIC_RANGE_SDR8;
+		chn_attr.enPixelFormat = RK_FMT_YUV420SP;
+		chn_attr.stFrameRate.s32SrcFrameRate = -1;
+		chn_attr.stFrameRate.s32DstFrameRate = app->config.preview_fps;
+		chn_attr.u32Width = app->config.preview_width;
+		chn_attr.u32Height = app->config.preview_height;
+		chn_attr.enCompressMode = COMPRESS_MODE_NONE;
+		chn_attr.u32Depth = 2;
+		chn_attr.u32FrameBufCnt = 3;
+		ret = RK_MPI_VPSS_SetChnAttr(AI_CAM_VPSS_GRP, AI_CAM_VPSS_PREVIEW_CHN,
+		                             &chn_attr);
+		if (ret != RK_SUCCESS)
+			goto failed;
+		memset(&crop, 0, sizeof(crop));
+		crop.bEnable = RK_FALSE;
+		ret = RK_MPI_VPSS_SetChnCrop(AI_CAM_VPSS_GRP, AI_CAM_VPSS_PREVIEW_CHN, &crop);
+		if (ret != RK_SUCCESS)
+			goto failed;
+		ret = RK_MPI_VPSS_EnableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_PREVIEW_CHN);
+		if (ret != RK_SUCCESS)
+			goto failed;
+		preview_enabled = true;
+	}
 	ret = RK_MPI_VPSS_StartGrp(AI_CAM_VPSS_GRP);
 	if (ret != RK_SUCCESS)
-		goto failed_sub_encode;
+		goto failed;
 
-	printf("#VPSS display: crop [%d %d %d %d] -> scale %dx%d\n", crop_x, crop_y,
-	       crop_size, crop_size, app->config.vo_width, app->config.vo_height);
+	if (app->config.enable_vo)
+		printf("#VPSS display: crop [%d %d %d %d] -> scale %dx%d\n", crop_x, crop_y,
+		       crop_size, crop_size, app->config.vo_width, app->config.vo_height);
 	printf("#VPSS encoder: scale %dx%d NV12\n", app->config.venc_width,
 	       app->config.venc_height);
 	printf("#VPSS sub encoder: scale %dx%d NV12\n", app->config.sub_venc_width,
 	       app->config.sub_venc_height);
+	if (app->config.preview_shm_name)
+		printf("#VPSS preview: ch%d scale %dx%d NV12 at %d FPS\n",
+		       AI_CAM_VPSS_PREVIEW_CHN, app->config.preview_width,
+		       app->config.preview_height, app->config.preview_fps);
 	app->vpss_initialized = true;
 	return RK_SUCCESS;
 
-failed_sub_encode:
-	RK_MPI_VPSS_DisableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_SUB_ENCODE_CHN);
-failed_encode:
-	RK_MPI_VPSS_DisableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_ENCODE_CHN);
-failed_display:
-	RK_MPI_VPSS_DisableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_DISPLAY_CHN);
+failed:
+	if (preview_enabled)
+		RK_MPI_VPSS_DisableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_PREVIEW_CHN);
+	if (sub_encode_enabled)
+		RK_MPI_VPSS_DisableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_SUB_ENCODE_CHN);
+	if (encode_enabled)
+		RK_MPI_VPSS_DisableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_ENCODE_CHN);
+	if (display_enabled)
+		RK_MPI_VPSS_DisableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_DISPLAY_CHN);
 failed_destroy:
 	RK_MPI_VPSS_DestroyGrp(AI_CAM_VPSS_GRP);
 	return ret;
@@ -141,7 +185,10 @@ void ai_cam_vpss_stop(AiCamApp *app) {
 	RK_MPI_VPSS_StopGrp(AI_CAM_VPSS_GRP);
 	RK_MPI_VPSS_DisableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_SUB_ENCODE_CHN);
 	RK_MPI_VPSS_DisableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_ENCODE_CHN);
-	RK_MPI_VPSS_DisableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_DISPLAY_CHN);
+	if (app->config.preview_shm_name)
+		RK_MPI_VPSS_DisableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_PREVIEW_CHN);
+	if (app->config.enable_vo)
+		RK_MPI_VPSS_DisableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_DISPLAY_CHN);
 	RK_MPI_VPSS_DestroyGrp(AI_CAM_VPSS_GRP);
 	app->vpss_initialized = false;
 }

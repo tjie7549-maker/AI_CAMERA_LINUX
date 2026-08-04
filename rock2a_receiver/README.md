@@ -11,6 +11,8 @@ RV1106 /live/1
   -> JPEG / latest.jpg
   -> Qwen Vision API
   -> latest_result.json
+  -> TCP 0.0.0.0:9000
+  -> RV1106 Qt UI
 ```
 
 ## 当前网络
@@ -96,7 +98,8 @@ cd /home/radxa/AI_CAMERA_LINUX/rock2a_receiver
 3. 每 3 秒原子更新一次最新图片。
 4. 每 5 秒最多调用一次千问 API。
 5. 在当前终端显示最新的中文 JSON 识别结果。
-6. C++ 接收结束后正常停止 Python 监控。
+6. 监听 `0.0.0.0:9000`，将最新 JSON 自动发送给 RV1106 Qt。
+7. Ctrl+C 时向 C++ 接收、千问监控和 TCP 结果服务均发送正常 `SIGINT`。
 
 持续运行到 Ctrl+C：
 
@@ -128,6 +131,9 @@ C++ 接收日志：
 
 千问监控日志：
 /home/radxa/AI_CAMERA_LINUX/rock2a_receiver/runtime/ai_cam/qwen_watch.log
+
+TCP 结果服务日志：
+/home/radxa/AI_CAMERA_LINUX/rock2a_receiver/runtime/ai_cam/result_tcp.log
 ```
 
 格式化查看最新识别结果：

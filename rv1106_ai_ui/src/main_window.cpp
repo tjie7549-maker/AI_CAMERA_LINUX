@@ -1,4 +1,5 @@
 #include "main_window.h"
+#include "video_widget.h"
 
 #include <QDateTime>
 #include <QFile>
@@ -38,6 +39,9 @@ MainWindow::MainWindow(QWidget *parent)
       videoStatusLabel_(nullptr),
       aiStatusLabel_(nullptr),
       modelLabel_(nullptr),
+      videoWidget_(nullptr),
+      videoInfo_(nullptr),
+      videoWaiting_(nullptr),
       sceneValue_(nullptr),
       peopleValue_(nullptr),
       objectsValue_(nullptr),
@@ -123,31 +127,17 @@ void MainWindow::buildUi()
     videoLayout->addWidget(makeLabel(QStringLiteral("摄像头预览"),
                                      QStringLiteral("sectionTitle"), videoPanel));
 
-    auto *previewFrame = new QFrame(videoPanel);
-    previewFrame->setObjectName(QStringLiteral("previewFrame"));
-    previewFrame->setFixedSize(380, 214);
-    auto *previewLayout = new QVBoxLayout(previewFrame);
-    previewLayout->setContentsMargins(12, 12, 12, 12);
-    previewLayout->addStretch();
-    auto *previewTitle = makeLabel(QStringLiteral("摄像头预览"),
-                                   QStringLiteral("previewTitle"), previewFrame);
-    previewTitle->setAlignment(Qt::AlignCenter);
-    auto *previewMessage = makeLabel(QStringLiteral("等待视频输入"),
-                                     QStringLiteral("previewMessage"), previewFrame);
-    previewMessage->setAlignment(Qt::AlignCenter);
-    previewLayout->addWidget(previewTitle);
-    previewLayout->addWidget(previewMessage);
-    previewLayout->addStretch();
-    videoLayout->addWidget(previewFrame, 0, Qt::AlignHCenter);
+    videoWidget_ = new VideoWidget(videoPanel);
+    videoLayout->addWidget(videoWidget_, 0, Qt::AlignHCenter);
 
-    auto *videoInfo = makeLabel(QStringLiteral("640 x 360     解码 20 FPS"),
-                                QStringLiteral("videoInfo"), videoPanel);
-    videoInfo->setAlignment(Qt::AlignCenter);
-    videoLayout->addWidget(videoInfo);
-    auto *waiting = makeLabel(QStringLiteral("视频输入：等待"),
+    videoInfo_ = makeLabel(QStringLiteral("预览等待"),
+                           QStringLiteral("videoInfo"), videoPanel);
+    videoInfo_->setAlignment(Qt::AlignCenter);
+    videoLayout->addWidget(videoInfo_);
+    videoWaiting_ = makeLabel(QStringLiteral("视频输入：离线"),
                               QStringLiteral("videoWaiting"), videoPanel);
-    waiting->setAlignment(Qt::AlignCenter);
-    videoLayout->addWidget(waiting);
+    videoWaiting_->setAlignment(Qt::AlignCenter);
+    videoLayout->addWidget(videoWaiting_);
     videoLayout->addStretch();
     middleLayout->addWidget(videoPanel);
 
@@ -240,8 +230,8 @@ void MainWindow::showDefaultState()
     outputTokensValue_->setText(QStringLiteral("0"));
     updatedValue_->setText(QStringLiteral("--:--:--"));
     errorValue_->setText(QStringLiteral("最近错误：无"));
-    setStateLabel(videoStatusLabel_, QStringLiteral("视频等待"),
-                  QStringLiteral("waiting"));
+    setStateLabel(videoStatusLabel_, QStringLiteral("视频离线"),
+                  QStringLiteral("offline"));
     setStateLabel(aiStatusLabel_, QStringLiteral("AI 离线"),
                   QStringLiteral("offline"));
     setStateLabel(warningValue_, QStringLiteral("正常"),
@@ -326,6 +316,38 @@ void MainWindow::updateAiState(const QString &state)
 void MainWindow::updateError(const QString &message)
 {
     errorValue_->setText(QStringLiteral("最近错误：%1").arg(message.left(100)));
+}
+
+void MainWindow::updatePreviewFrame(const QImage &image, qulonglong frameId,
+                                    qulonglong sourceTimeNs)
+{
+    videoWidget_->setFrame(image, frameId, sourceTimeNs);
+}
+
+void MainWindow::updatePreviewState(int state)
+{
+    QString text = QStringLiteral("视频离线");
+    QString visualState = QStringLiteral("offline");
+    QString detail = QStringLiteral("视频输入：离线");
+
+    if (state == 2) {
+        text = QStringLiteral("视频在线");
+        visualState = QStringLiteral("online");
+        detail = QStringLiteral("视频输入：共享内存正常");
+    } else if (state == 1) {
+        text = QStringLiteral("视频超时");
+        visualState = QStringLiteral("waiting");
+        detail = QStringLiteral("视频输入：超过 1 秒未更新");
+    }
+    setStateLabel(videoStatusLabel_, text, visualState);
+    videoWaiting_->setText(detail);
+    videoWidget_->setState(state);
+}
+
+void MainWindow::updatePreviewStats(const QString &line1, const QString &line2)
+{
+    videoInfo_->setText(line1);
+    videoWaiting_->setText(line2);
 }
 
 void MainWindow::setStateLabel(QLabel *label, const QString &text,

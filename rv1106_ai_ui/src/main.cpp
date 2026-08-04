@@ -17,6 +17,7 @@
 #include "ai_result.h"
 #include "ai_result_client.h"
 #include "main_window.h"
+#include "preview_shm_reader.h"
 #include "status_controller.h"
 
 namespace {
@@ -96,8 +97,18 @@ int main(int argc, char *argv[])
         QStringList() << QStringLiteral("server-port"),
         QStringLiteral("ROCK 2A TCP server port"),
         QStringLiteral("port"), QStringLiteral("9000"));
+    QCommandLineOption previewShmOption(
+        QStringList() << QStringLiteral("preview-shm"),
+        QStringLiteral("POSIX shared-memory preview name"),
+        QStringLiteral("name"), QStringLiteral("/ai_cam_preview"));
+    QCommandLineOption previewTimeoutOption(
+        QStringList() << QStringLiteral("preview-timeout-ms"),
+        QStringLiteral("Preview stale timeout in milliseconds"),
+        QStringLiteral("milliseconds"), QStringLiteral("1000"));
     parser.addOption(serverIpOption);
     parser.addOption(serverPortOption);
+    parser.addOption(previewShmOption);
+    parser.addOption(previewTimeoutOption);
     parser.process(app);
 
     const QString serverIp = parser.value(serverIpOption);
@@ -116,6 +127,18 @@ int main(int argc, char *argv[])
                      parser.value(serverPortOption).toLocal8Bit().constData());
         return 2;
     }
+    bool previewTimeoutOk = false;
+    const int previewTimeoutMs = parser.value(previewTimeoutOption).toInt(&previewTimeoutOk);
+    if (!previewTimeoutOk || previewTimeoutMs < 100) {
+        std::fprintf(stderr, "Invalid --preview-timeout-ms: %s\n",
+                     parser.value(previewTimeoutOption).toLocal8Bit().constData());
+        return 2;
+    }
+    const QString previewShm = parser.value(previewShmOption);
+    if (!previewShm.startsWith(QLatin1Char('/'))) {
+        std::fprintf(stderr, "--preview-shm must start with /\n");
+        return 2;
+    }
 
     const QSize screenSize = app.primaryScreen()->size();
     if (screenSize != QSize(720, 720)) {
@@ -126,6 +149,7 @@ int main(int argc, char *argv[])
     MainWindow window;
     StatusController statusController;
     AiResultClient client(serverIp, static_cast<quint16>(portValue));
+    PreviewShmReader previewReader(previewShm, previewTimeoutMs);
 
     QObject::connect(&client, &AiResultClient::resultReceived,
                      &window, &MainWindow::updateAiResult);
@@ -139,8 +163,16 @@ int main(int argc, char *argv[])
                      &window, &MainWindow::updateError);
     QObject::connect(&statusController, &StatusController::aiStateChanged,
                      &window, &MainWindow::updateAiState);
+    QObject::connect(&previewReader, &PreviewShmReader::frameReady,
+                     &window, &MainWindow::updatePreviewFrame);
+    QObject::connect(&previewReader, &PreviewShmReader::stateChanged,
+                     &window, &MainWindow::updatePreviewState);
+    QObject::connect(&previewReader, &PreviewShmReader::statsChanged,
+                     &window, &MainWindow::updatePreviewStats);
     QObject::connect(&app, &QCoreApplication::aboutToQuit,
                      &client, &AiResultClient::stop);
+    QObject::connect(&app, &QCoreApplication::aboutToQuit,
+                     &previewReader, &PreviewShmReader::stop);
 
     QSocketNotifier signalNotifier(signalPipe[0], QSocketNotifier::Read, &app);
     QObject::connect(&signalNotifier, &QSocketNotifier::activated,
@@ -154,6 +186,7 @@ int main(int argc, char *argv[])
     QApplication::setOverrideCursor(Qt::BlankCursor);
     window.showFullScreen();
     QTimer::singleShot(0, &client, &AiResultClient::start);
+    QTimer::singleShot(0, &previewReader, &PreviewShmReader::start);
     const int result = app.exec();
 
     close(signalPipe[0]);

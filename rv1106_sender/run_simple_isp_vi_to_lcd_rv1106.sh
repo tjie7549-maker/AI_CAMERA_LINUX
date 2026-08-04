@@ -13,7 +13,13 @@ isp_index=0
 vo_layer=0
 vo_device=0
 output=/dev/null
+encoded_frames=
 restore_default=0
+no_vo=0
+preview_shm=
+preview_width=384
+preview_height=216
+preview_fps=15
 
 usage() {
 	cat <<EOF
@@ -32,6 +38,12 @@ Options:
   --vo-layer INDEX        VO layer (default: $vo_layer)
   --vo-device INDEX       VO device (default: $vo_device)
   --output PATH           Main H.264 output; /dev/null disables file saving
+  --encoded-frames COUNT  Stop normally after COUNT main-stream frames
+  --no-vo                 Do not initialize VO; reserve LCD ownership for Qt
+  --preview-shm NAME      Publish RGB preview frames to POSIX shared memory
+  --preview-width WIDTH   Preview width (default: $preview_width)
+  --preview-height HEIGHT Preview height (default: $preview_height)
+  --preview-fps FPS       Preview frame rate (default: $preview_fps)
   --restore               Restart rkipc after this program exits
   --help                  Show this help
 EOF
@@ -97,6 +109,34 @@ while [ "$#" -gt 0 ]; do
 		--output)
 			require_value "$@"
 			output=$2
+			shift
+			;;
+		--encoded-frames|-n)
+			require_value "$@"
+			encoded_frames=$2
+			shift
+			;;
+		--no-vo)
+			no_vo=1
+			;;
+		--preview-shm)
+			require_value "$@"
+			preview_shm=$2
+			shift
+			;;
+		--preview-width)
+			require_value "$@"
+			preview_width=$2
+			shift
+			;;
+		--preview-height)
+			require_value "$@"
+			preview_height=$2
+			shift
+			;;
+		--preview-fps)
+			require_value "$@"
+			preview_fps=$2
 			shift
 			;;
 		--restore)
@@ -185,24 +225,37 @@ if [ ! -x "$APP" ]; then
 	exit 1
 fi
 
+if [ -n "$preview_shm" ] && [ "$no_vo" -ne 1 ]; then
+	echo "--preview-shm requires --no-vo" >&2
+	exit 1
+fi
+
 trap on_signal INT TERM
 
 stop_rkipc || exit 1
 unblank_backlight
 
 export LD_LIBRARY_PATH=/oem/usr/lib
-if [ "$restore_default" -eq 0 ]; then
-	# 默认模式不需要在退出后恢复 rkipc，直接替换脚本进程，避免 Ctrl+C 被脚本重复转发。
-	exec "$APP" -a "$iq_dir" \
-		-w "$sensor_width" -h "$sensor_height" -W "$lcd_width" -H "$lcd_height" \
-		-r "$rotation" -I "$isp_index" -l "$vo_layer" -d "$vo_device" \
-		-o "$output"
-fi
-
-"$APP" -a "$iq_dir" \
+set -- -a "$iq_dir" \
 	-w "$sensor_width" -h "$sensor_height" -W "$lcd_width" -H "$lcd_height" \
 	-r "$rotation" -I "$isp_index" -l "$vo_layer" -d "$vo_device" \
-	-o "$output" &
+	-o "$output"
+if [ "$no_vo" -eq 1 ]; then
+	set -- "$@" --no-vo
+fi
+if [ -n "$preview_shm" ]; then
+	set -- "$@" --preview-shm "$preview_shm" --preview-width "$preview_width" \
+		--preview-height "$preview_height" --preview-fps "$preview_fps"
+fi
+if [ -n "$encoded_frames" ]; then
+	set -- "$@" -n "$encoded_frames"
+fi
+if [ "$restore_default" -eq 0 ]; then
+	# 默认模式不需要在退出后恢复 rkipc，直接替换脚本进程，避免 Ctrl+C 被脚本重复转发。
+	exec "$APP" "$@"
+fi
+
+"$APP" "$@" &
 app_pid=$!
 wait "$app_pid"
 status=$?
