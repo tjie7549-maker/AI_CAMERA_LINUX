@@ -1,6 +1,8 @@
 # RV1106 build output
 /out/
 rv1106_sender/out/
+rv1106_ai_ui/build/
+rv1106_ai_ui/fonts/
 
 # ROCK 2A build output and runtime data
 rock2a_receiver/build/
