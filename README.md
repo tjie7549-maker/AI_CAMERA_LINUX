@@ -49,7 +49,14 @@ cd rv1106_ai_ui
 
 Qt 与 RKMPI VO 不能同时占用 LCD。智能视觉模式中使用 no-VO 发送端，由 Qt 独占 LCD；发送端通过 CMA DMA-BUF 把实时预览帧传给 Qt。
 
-日常启动只需两个终端：
+日常启动推荐使用 ROCK 2A 的双板联动入口。它通过专用 SSH 密钥远程启动 RV1106，等待 RTSP/Qt 预览就绪后再启动本地 AI 管线；一次 Ctrl+C 即可按顺序停止两块板子：
+
+```sh
+cd /home/radxa/AI_CAMERA_LINUX/rock2a_receiver
+./run_linked_ai_camera.sh
+```
+
+也可以分开启动，但必须先启动 RV1106，再启动 ROCK 2A：
 
 ```sh
 # ROCK 2A：RTSP 接收、千问识别、TCP 结果回传
@@ -61,7 +68,7 @@ cd /root/userdata/ai_camera
 ./run_ai_terminal.sh
 ```
 
-两边均按 Ctrl+C 正常停止。ROCK 2A 脚本自动监听 `0.0.0.0:9000`，Qt 默认连接 `192.168.50.1:9000`。
+联动入口中，ROCK 2A 先停止 AI 管线，再向 RV1106 总控发送 `SIGTERM`；没有强制结束。ROCK 2A 脚本自动监听 `0.0.0.0:9000`，Qt 默认连接 `192.168.50.1:9000`。
 
 ## 仓库规则
 

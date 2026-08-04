@@ -38,6 +38,7 @@ rock2a_receiver/
 ├── runtime/ai_cam/         最新图片、识别结果与运行日志
 ├── run_ai_monitor.sh       一键接收与识别脚本
 ├── run_ai_pipeline.sh      自动编译后持续启动识别的入口脚本
+├── run_linked_ai_camera.sh 双板联动入口
 └── .venv-qwen/             独立 Python 虚拟环境
 ```
 
@@ -84,6 +85,19 @@ pip install -r tools/qwen_vision/requirements.txt
 
 ## 一键运行
 
+推荐使用双板联动入口。它通过 ROCK 2A 到 RV1106 的专用 SSH 密钥启动远端摄像头、RTSP
+和 Qt，再启动本地 AI 管线；按一次 Ctrl+C 会先停止 ROCK 2A，再远程正常停止 RV1106：
+
+```sh
+cd /home/radxa/AI_CAMERA_LINUX/rock2a_receiver
+./run_linked_ai_camera.sh
+```
+
+该脚本不存储 RV1106 登录密码。首次部署后，ROCK 2A 的 `~/.ssh/config` 中需要存在
+`rv1106-ai-camera` 主机别名。
+
+也可以分别启动。此时必须先启动 RV1106 并等待 RTSP 就绪，再启动 ROCK 2A：
+
 在 RV1106 已经运行推流的前提下，ROCK 2A 执行：
 
 ```sh
@@ -99,7 +113,7 @@ cd /home/radxa/AI_CAMERA_LINUX/rock2a_receiver
 4. 每 5 秒最多调用一次千问 API。
 5. 在当前终端显示最新的中文 JSON 识别结果。
 6. 监听 `0.0.0.0:9000`，将最新 JSON 自动发送给 RV1106 Qt。
-7. Ctrl+C 时向 C++ 接收、千问监控和 TCP 结果服务均发送正常 `SIGINT`。
+7. Ctrl+C 时由监督脚本向 C++ 接收、千问监控和 TCP 结果服务分别发送一次 `SIGTERM`。
 
 持续运行到 Ctrl+C：
 
@@ -115,7 +129,7 @@ cd /home/radxa/AI_CAMERA_LINUX/rock2a_receiver
 ./run_ai_monitor.sh --url rtsp://192.168.50.2:554/live/1
 ```
 
-按 Ctrl+C 时，脚本会向 C++ 与 Python 子进程发送正常 `SIGINT`，不使用强制结束。
+按 Ctrl+C 时，脚本会向子进程发送正常 `SIGTERM`，不使用强制结束。
 
 ## 查看结果
 

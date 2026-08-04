@@ -95,17 +95,19 @@ set +a
 receiver_pid=""
 watcher_pid=""
 tcp_pid=""
+stopping=0
+
+stop_child() {
+    pid=$1
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        kill -TERM "$pid" 2>/dev/null || true
+    fi
+}
 
 stop_children() {
-    if [ -n "$tcp_pid" ] && kill -0 "$tcp_pid" 2>/dev/null; then
-        kill -INT "$tcp_pid" 2>/dev/null || true
-    fi
-    if [ -n "$watcher_pid" ] && kill -0 "$watcher_pid" 2>/dev/null; then
-        kill -INT "$watcher_pid" 2>/dev/null || true
-    fi
-    if [ -n "$receiver_pid" ] && kill -0 "$receiver_pid" 2>/dev/null; then
-        kill -INT "$receiver_pid" 2>/dev/null || true
-    fi
+    stop_child "$receiver_pid"
+    stop_child "$watcher_pid"
+    stop_child "$tcp_pid"
     if [ -n "$watcher_pid" ]; then
         wait "$watcher_pid" 2>/dev/null || true
     fi
@@ -144,6 +146,11 @@ tcp_is_running() {
 }
 
 on_signal() {
+    if [ "$stopping" -ne 0 ]; then
+        return
+    fi
+    stopping=1
+    trap '' INT TERM
     echo
     echo "Stopping receiver, Qwen monitor, and TCP result server..."
     stop_children
@@ -152,7 +159,9 @@ on_signal() {
 
 trap on_signal INT TERM
 
-"$RECEIVER" \
+# Run every child in a separate session.  Terminal Ctrl+C is handled by this
+# supervisor only, which prevents a duplicate signal while cleanup is waiting.
+setsid "$RECEIVER" \
     --url "$URL" \
     --output "$FRAME_DIR" \
     --interval-ms 5000 \
@@ -161,13 +170,13 @@ trap on_signal INT TERM
     --duration "$DURATION" >"$RECEIVER_LOG" 2>&1 &
 receiver_pid=$!
 
-"$PYTHON" "$PROJECT_DIR/tools/qwen_vision/watch_latest_image.py" \
+setsid "$PYTHON" "$PROJECT_DIR/tools/qwen_vision/watch_latest_image.py" \
     --image "$LATEST_IMAGE" \
     --result "$LATEST_RESULT" \
     --interval-ms 5000 >"$WATCHER_LOG" 2>&1 &
 watcher_pid=$!
 
-"$PYTHON" "$PROJECT_DIR/tools/qwen_vision/send_result_tcp.py" \
+setsid "$PYTHON" "$PROJECT_DIR/tools/qwen_vision/send_result_tcp.py" \
     --input "$LATEST_RESULT" \
     --host "${RESULT_HOST:-0.0.0.0}" \
     --port "${RESULT_PORT:-9000}" >"$TCP_LOG" 2>&1 &
@@ -205,22 +214,13 @@ with open(sys.argv[1], encoding="utf-8") as source:
     sleep 1
 done
 
-wait "$receiver_pid"
-receiver_status=$?
+if wait "$receiver_pid"; then
+    receiver_status=0
+else
+    receiver_status=$?
+fi
 receiver_pid=""
-
-if [ -n "$watcher_pid" ] && kill -0 "$watcher_pid" 2>/dev/null; then
-    kill -INT "$watcher_pid" 2>/dev/null || true
-fi
-if [ -n "$watcher_pid" ]; then
-    wait "$watcher_pid" 2>/dev/null || true
-fi
-if [ -n "$tcp_pid" ] && kill -0 "$tcp_pid" 2>/dev/null; then
-    kill -INT "$tcp_pid" 2>/dev/null || true
-fi
-if [ -n "$tcp_pid" ]; then
-    wait "$tcp_pid" 2>/dev/null || true
-fi
+stop_children
 
 echo
 echo "Receiver finished with exit code $receiver_status"
