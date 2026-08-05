@@ -1,12 +1,19 @@
 #include "main_window.h"
+#include "ai_result_client.h"
+#include "manual_recognition_client.h"
 #include "video_widget.h"
 
 #include <QDateTime>
+#include <QDebug>
 #include <QFile>
 #include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QPushButton>
+#include <QSignalBlocker>
 #include <QStyle>
 #include <QTimer>
 #include <QVariant>
@@ -33,7 +40,7 @@ void addResultField(QVBoxLayout *layout, const QString &caption,
 }
 } // namespace
 
-MainWindow::MainWindow(QWidget *parent)
+MainWindow::MainWindow(ManualRecognitionClient *manualClient, QWidget *parent)
     : QWidget(parent),
       clockLabel_(nullptr),
       videoStatusLabel_(nullptr),
@@ -42,6 +49,9 @@ MainWindow::MainWindow(QWidget *parent)
       videoWidget_(nullptr),
       videoInfo_(nullptr),
       videoWaiting_(nullptr),
+      manualClient_(manualClient),
+      pauseButton_(nullptr),
+      recognizeButton_(nullptr),
       sceneValue_(nullptr),
       peopleValue_(nullptr),
       objectsValue_(nullptr),
@@ -55,7 +65,14 @@ MainWindow::MainWindow(QWidget *parent)
       updatedValue_(nullptr),
       tcpValue_(nullptr),
       errorValue_(nullptr),
-      clockTimer_(new QTimer(this))
+      clockTimer_(new QTimer(this)),
+      previewUiState_(PreviewUiState::Live),
+      previewStreamState_(0),
+      sourceFrameId_(0),
+      sourceTimestampNs_(0),
+      activeRequestFrameId_(0),
+      activeRequestTimestampNs_(0),
+      manualRequestSequence_(0)
 {
     setObjectName(QStringLiteral("root"));
     setWindowFlags(Qt::FramelessWindowHint);
@@ -138,6 +155,33 @@ void MainWindow::buildUi()
                               QStringLiteral("videoWaiting"), videoPanel);
     videoWaiting_->setAlignment(Qt::AlignCenter);
     videoLayout->addWidget(videoWaiting_);
+
+    auto *buttonLayout = new QHBoxLayout;
+    buttonLayout->setContentsMargins(0, 0, 0, 0);
+    buttonLayout->setSpacing(16);
+    buttonLayout->addStretch();
+    pauseButton_ = new QPushButton(QStringLiteral("暂停"), videoPanel);
+    pauseButton_->setObjectName(QStringLiteral("pauseButton"));
+    pauseButton_->setFixedSize(160, 64);
+    pauseButton_->setCheckable(true);
+    pauseButton_->setFocusPolicy(Qt::NoFocus);
+    pauseButton_->setAutoRepeat(false);
+    connect(pauseButton_, &QPushButton::toggled,
+            this, &MainWindow::onPauseToggled);
+    buttonLayout->addWidget(pauseButton_);
+
+    recognizeButton_ = new QPushButton(QStringLiteral("识别"), videoPanel);
+    recognizeButton_->setObjectName(QStringLiteral("recognizeButton"));
+    recognizeButton_->setFixedSize(160, 64);
+    recognizeButton_->setFocusPolicy(Qt::NoFocus);
+    recognizeButton_->setAutoRepeat(false);
+    recognizeButton_->setEnabled(false);
+    recognizeButton_->setToolTip(QStringLiteral("尚未接入手动识别"));
+    connect(recognizeButton_, &QPushButton::clicked,
+            this, &MainWindow::onRecognizeClicked);
+    buttonLayout->addWidget(recognizeButton_);
+    buttonLayout->addStretch();
+    videoLayout->addLayout(buttonLayout);
     videoLayout->addStretch();
     middleLayout->addWidget(videoPanel);
 
@@ -238,10 +282,21 @@ void MainWindow::showDefaultState()
                   QStringLiteral("normal"));
     setStateLabel(tcpValue_, QStringLiteral("TCP 未连接"),
                   QStringLiteral("offline"));
+    setPreviewUiState(PreviewUiState::Live);
 }
 
 void MainWindow::updateAiResult(const AiResult &result)
 {
+    if (result.source == QStringLiteral("manual")) {
+        if (result.requestId.isEmpty() || result.requestId == lastAppliedRequestId_ ||
+            result.requestId != activeRequestId_ || result.frameId != activeRequestFrameId_) {
+            return;
+        }
+        applyManualResult(result, result.serverLatencyMs);
+        return;
+    }
+    if (previewUiState_ != PreviewUiState::Live)
+        return;
     sceneValue_->setText(result.scene);
     peopleValue_->setText(QString::number(result.peopleCount));
     objectsValue_->setText(result.objects.isEmpty()
@@ -321,33 +376,198 @@ void MainWindow::updateError(const QString &message)
 void MainWindow::updatePreviewFrame(const QImage &image, qulonglong frameId,
                                     qulonglong sourceTimeNs)
 {
+    sourceFrameId_ = frameId;
+    sourceTimestampNs_ = sourceTimeNs;
     videoWidget_->setFrame(image, frameId, sourceTimeNs);
 }
 
 void MainWindow::updatePreviewState(int state)
 {
-    QString text = QStringLiteral("视频离线");
-    QString visualState = QStringLiteral("offline");
-    QString detail = QStringLiteral("视频输入：离线");
-
-    if (state == 2) {
-        text = QStringLiteral("视频在线");
-        visualState = QStringLiteral("online");
-        detail = QStringLiteral("视频输入：共享内存正常");
-    } else if (state == 1) {
-        text = QStringLiteral("视频超时");
-        visualState = QStringLiteral("waiting");
-        detail = QStringLiteral("视频输入：超过 1 秒未更新");
-    }
-    setStateLabel(videoStatusLabel_, text, visualState);
-    videoWaiting_->setText(detail);
+    previewStreamState_ = state;
+    updateVideoStatus();
     videoWidget_->setState(state);
 }
 
 void MainWindow::updatePreviewStats(const QString &line1, const QString &line2)
 {
     videoInfo_->setText(line1);
-    videoWaiting_->setText(line2);
+    if (previewUiState_ == PreviewUiState::Frozen) {
+        videoWaiting_->setText(QStringLiteral("暂停帧 %1   后台最新帧 %2")
+                                   .arg(videoWidget_->frozenFrameId())
+                                   .arg(sourceFrameId_));
+    } else {
+        videoWaiting_->setText(line2);
+    }
+}
+
+void MainWindow::onPauseToggled(bool checked)
+{
+    if (checked) {
+        if (!videoWidget_->freezeCurrentFrame()) {
+            QSignalBlocker blocker(pauseButton_);
+            pauseButton_->setChecked(false);
+            updateError(QStringLiteral("暂无可暂停画面"));
+            setPreviewUiState(PreviewUiState::Live);
+            return;
+        }
+        setPreviewUiState(PreviewUiState::Frozen);
+        return;
+    }
+
+    videoWidget_->resumeLivePreview();
+    setPreviewUiState(PreviewUiState::Live);
+}
+
+void MainWindow::onRecognizeClicked()
+{
+    if (!manualClient_ || manualClient_->isBusy() ||
+        (previewUiState_ != PreviewUiState::Frozen &&
+         previewUiState_ != PreviewUiState::ResultReady &&
+         previewUiState_ != PreviewUiState::Error)) {
+        return;
+    }
+
+    requestSnapshot_.image = videoWidget_->frozenImageCopy();
+    requestSnapshot_.frameId = videoWidget_->frozenFrameId();
+    requestSnapshot_.timestampNs = videoWidget_->frozenTimestampNs();
+    if (!requestSnapshot_.isValid()) {
+        updateError(QStringLiteral("冻结画面无效，无法识别"));
+        setPreviewUiState(PreviewUiState::Error);
+        return;
+    }
+
+    ++manualRequestSequence_;
+    activeRequestId_ = QStringLiteral("manual-%1-%2")
+                           .arg(QDateTime::currentDateTimeUtc().toMSecsSinceEpoch())
+                           .arg(manualRequestSequence_, 4, 10, QLatin1Char('0'));
+    activeRequestFrameId_ = requestSnapshot_.frameId;
+    activeRequestTimestampNs_ = requestSnapshot_.timestampNs;
+    setPreviewUiState(PreviewUiState::Recognizing);
+    if (!manualClient_->recognize(requestSnapshot_.image, activeRequestId_,
+                                  activeRequestFrameId_, activeRequestTimestampNs_)) {
+        updateError(QStringLiteral("冻结画面编码失败或识别服务不可用"));
+        setPreviewUiState(PreviewUiState::Error);
+    }
+}
+
+void MainWindow::onManualRequestStarted(const QString &requestId, quint64 frameId,
+                                        int jpegBytes)
+{
+    Q_UNUSED(jpegBytes)
+    if (requestId != activeRequestId_ || frameId != activeRequestFrameId_)
+        return;
+    videoWaiting_->setText(QStringLiteral("暂停帧 %1   正在识别").arg(frameId));
+}
+
+void MainWindow::onManualRequestSucceeded(const QString &requestId, quint64 frameId,
+                                          const QJsonObject &document,
+                                          qint64 elapsedMs)
+{
+    if (requestId != activeRequestId_ || frameId != activeRequestFrameId_ ||
+        document.value(QStringLiteral("request_id")).toString() != requestId ||
+        static_cast<quint64>(document.value(QStringLiteral("frame_id")).toDouble()) != frameId) {
+        return;
+    }
+    AiResult result;
+    QString error;
+    if (!AiResultClient::parseMessage(QJsonDocument(document).toJson(QJsonDocument::Compact),
+                                      result, error) || !result.success) {
+        onManualRequestFailed(requestId, frameId, QStringLiteral("识别结果格式错误"), 0,
+                              elapsedMs);
+        return;
+    }
+    applyManualResult(result, elapsedMs);
+}
+
+void MainWindow::onManualRequestFailed(const QString &requestId, quint64 frameId,
+                                       const QString &message, int httpStatus,
+                                       qint64 elapsedMs)
+{
+    if (requestId != activeRequestId_ || frameId != activeRequestFrameId_)
+        return;
+    updateError(httpStatus > 0 ? QStringLiteral("识别失败（HTTP %1）：%2")
+                                   .arg(httpStatus).arg(message)
+                               : QStringLiteral("识别失败：%1").arg(message));
+    videoWaiting_->setText(QStringLiteral("暂停帧 %1   请求耗时 %2 ms")
+                               .arg(frameId).arg(elapsedMs));
+    setPreviewUiState(PreviewUiState::Error);
+}
+
+void MainWindow::setPreviewUiState(PreviewUiState state)
+{
+    previewUiState_ = state;
+    const bool frozen = state != PreviewUiState::Live;
+    {
+        QSignalBlocker blocker(pauseButton_);
+        pauseButton_->setChecked(frozen);
+    }
+    pauseButton_->setText(frozen ? QStringLiteral("继续") : QStringLiteral("暂停"));
+    pauseButton_->setEnabled(state != PreviewUiState::Recognizing);
+    recognizeButton_->setEnabled(state == PreviewUiState::Frozen ||
+                                 state == PreviewUiState::ResultReady ||
+                                 state == PreviewUiState::Error);
+    if (state == PreviewUiState::Recognizing)
+        recognizeButton_->setText(QStringLiteral("识别中…"));
+    else if (state == PreviewUiState::ResultReady)
+        recognizeButton_->setText(QStringLiteral("重新识别"));
+    else if (state == PreviewUiState::Error)
+        recognizeButton_->setText(QStringLiteral("重试识别"));
+    else
+        recognizeButton_->setText(QStringLiteral("识别"));
+    updateVideoStatus();
+
+    if (frozen) {
+        videoWaiting_->setText(QStringLiteral("暂停帧 %1   后台最新帧 %2")
+                                   .arg(videoWidget_->frozenFrameId())
+                                   .arg(sourceFrameId_));
+    }
+}
+
+void MainWindow::updateVideoStatus()
+{
+    if (previewUiState_ != PreviewUiState::Live) {
+        setStateLabel(videoStatusLabel_, QStringLiteral("已暂停"),
+                      QStringLiteral("waiting"));
+        return;
+    }
+
+    QString text = QStringLiteral("视频离线");
+    QString visualState = QStringLiteral("offline");
+    if (previewStreamState_ == 2) {
+        text = QStringLiteral("实时");
+        visualState = QStringLiteral("online");
+    } else if (previewStreamState_ == 1) {
+        text = QStringLiteral("视频超时");
+        visualState = QStringLiteral("waiting");
+    }
+    setStateLabel(videoStatusLabel_, text, visualState);
+}
+
+void MainWindow::applyManualResult(const AiResult &result, qint64 totalElapsedMs)
+{
+    if (result.requestId != activeRequestId_ || result.frameId != activeRequestFrameId_ ||
+        result.requestId == lastAppliedRequestId_) {
+        return;
+    }
+    lastAppliedRequestId_ = result.requestId;
+    sceneValue_->setText(result.scene);
+    peopleValue_->setText(QString::number(result.peopleCount));
+    objectsValue_->setText(result.objects.isEmpty() ? QStringLiteral("无")
+                                                    : result.objects.join(QStringLiteral(", ")));
+    warningReasonValue_->setText(result.warning ? result.warningReason : QStringLiteral("-"));
+    summaryValue_->setText(result.summary);
+    modelLabel_->setText(QStringLiteral("手动识别  帧 %1").arg(result.frameId));
+    latencyValue_->setText(QStringLiteral("%1 ms").arg(result.latencyMs));
+    totalTokensValue_->setText(QString::number(result.totalTokens));
+    inputTokensValue_->setText(QString::number(result.inputTokens));
+    outputTokensValue_->setText(QString::number(result.outputTokens));
+    updatedValue_->setText(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss")));
+    setStateLabel(warningValue_, result.warning ? QStringLiteral("告警")
+                                                : QStringLiteral("正常"),
+                  result.warning ? QStringLiteral("warning") : QStringLiteral("normal"));
+    errorValue_->setText(QStringLiteral("手动识别完成：%1 ms").arg(totalElapsedMs));
+    videoWaiting_->setText(QStringLiteral("暂停帧 %1   识别完成").arg(result.frameId));
+    setPreviewUiState(PreviewUiState::ResultReady);
 }
 
 void MainWindow::setStateLabel(QLabel *label, const QString &text,

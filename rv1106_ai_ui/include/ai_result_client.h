@@ -18,6 +18,9 @@ public:
     void start();
     void stop();
 
+    static bool parseMessage(const QByteArray &message, AiResult &result,
+                             QString &error);
+
 signals:
     void resultReceived(const AiResult &result);
     void connectionStateChanged(const QString &state);
@@ -31,8 +34,6 @@ private slots:
     void onSocketError(QAbstractSocket::SocketError error);
 
 private:
-    bool parseMessage(const QByteArray &message, AiResult &result,
-                      QString &error) const;
     void scheduleReconnect();
     void setConnectionState(const QString &state);
 

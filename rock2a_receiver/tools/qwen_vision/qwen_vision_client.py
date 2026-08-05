@@ -87,6 +87,24 @@ class QwenVisionClient:
         if not mime_type:
             return self._failure("unsupported_image", "cannot determine image MIME type", started)
 
+        return self.analyze_image_bytes(image_bytes, mime_type)
+
+    def analyze_image_bytes(
+        self, image_bytes: bytes, mime_type: str = "image/jpeg"
+    ) -> dict[str, Any]:
+        """Analyze an in-memory image for manual frozen-frame recognition."""
+        started = time.monotonic()
+        if self._missing:
+            return self._failure(
+                "environment_missing",
+                "missing environment variables: " + ", ".join(self._missing),
+                started,
+            )
+        if not image_bytes:
+            return self._failure("image_read_error", "image data is empty", started)
+        if mime_type not in {"image/jpeg", "image/png", "image/webp"}:
+            return self._failure("unsupported_image", "unsupported image MIME type", started)
+
         data_url = "data:" + mime_type + ";base64," + base64.b64encode(image_bytes).decode("ascii")
         try:
             assert self.client is not None

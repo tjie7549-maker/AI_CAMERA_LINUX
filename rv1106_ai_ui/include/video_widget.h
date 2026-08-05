@@ -14,13 +14,28 @@ public slots:
     void setFrame(const QImage &image, qulonglong frameId, qulonglong sourceTimeNs);
     void setState(int state);
 
+public:
+    bool freezeCurrentFrame();
+    void resumeLivePreview();
+    bool isFrozen() const;
+    QImage frozenImageCopy() const;
+    qulonglong frozenFrameId() const;
+    qulonglong frozenTimestampNs() const;
+
 protected:
     void paintEvent(QPaintEvent *event) override;
 
 private:
-    QImage image_;
-    qulonglong frameId_;
-    qulonglong sourceTimeNs_;
+    QImage latestLiveImage_;
+    QImage displayedLiveImage_;
+    QImage frozenImage_;
+    qulonglong latestLiveFrameId_;
+    qulonglong latestLiveTimestampNs_;
+    qulonglong displayedLiveFrameId_;
+    qulonglong displayedLiveTimestampNs_;
+    qulonglong frozenFrameId_;
+    qulonglong frozenTimestampNs_;
+    bool frozen_;
     int state_;
 };
 

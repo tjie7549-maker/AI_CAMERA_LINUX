@@ -89,6 +89,34 @@ QLabel#videoWaiting {
     font-size: 17px;
 }
 
+QPushButton#pauseButton,
+QPushButton#recognizeButton {
+    background: #226b85;
+    border: 1px solid #44c2d7;
+    border-radius: 4px;
+    color: #f2f5f7;
+    font-size: 24px;
+    font-weight: 700;
+}
+
+QPushButton#pauseButton:pressed,
+QPushButton#recognizeButton:pressed {
+    background: #17495c;
+    border-color: #9eeaf4;
+}
+
+QPushButton#pauseButton:checked {
+    background: #a56722;
+    border-color: #f3b455;
+}
+
+QPushButton#pauseButton:disabled,
+QPushButton#recognizeButton:disabled {
+    background: #3b4650;
+    border-color: #596671;
+    color: #87939d;
+}
+
 QLabel#fieldCaption,
 QLabel#metricCaption {
     color: #81919f;

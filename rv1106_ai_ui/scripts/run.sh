@@ -38,6 +38,7 @@ export QT_QPA_PLATFORM_PLUGIN_PATH=/usr/lib/qt/plugins/platforms
 export QT_QPA_PLATFORM=linuxfb
 export QT_QPA_FB_DRM=1
 export QT_QPA_FONTDIR="$APP_DIR/fonts"
+export QT_QPA_EVDEV_TOUCHSCREEN_PARAMETERS=/dev/input/event0
 
 cd "$APP_DIR" || exit 1
 

@@ -18,7 +18,10 @@ struct AiResult {
           outputTokens(0),
           totalTokens(0),
           timestamp(QStringLiteral("-")),
-          success(false)
+          success(false),
+          frameId(0),
+          frameTimestampNs(0),
+          serverLatencyMs(0)
     {
     }
 
@@ -38,6 +41,13 @@ struct AiResult {
 
     QString timestamp;
     bool success;
+
+    QString type;
+    QString source;
+    QString requestId;
+    quint64 frameId;
+    quint64 frameTimestampNs;
+    qint64 serverLatencyMs;
 
     QString errorType;
     QString errorMessage;

@@ -159,7 +159,7 @@ void AiResultClient::onSocketError(QAbstractSocket::SocketError error)
 }
 
 bool AiResultClient::parseMessage(const QByteArray &message, AiResult &result,
-                                  QString &error) const
+                                  QString &error)
 {
     QJsonParseError parseError;
     const QJsonDocument document = QJsonDocument::fromJson(message, &parseError);
@@ -176,6 +176,17 @@ bool AiResultClient::parseMessage(const QByteArray &message, AiResult &result,
     result.timestamp = jsonString(root, QStringLiteral("timestamp"), result.timestamp);
     result.model = jsonString(root, QStringLiteral("model"), result.model);
     result.success = root.value(QStringLiteral("success")).toBool(false);
+    result.type = jsonString(root, QStringLiteral("type"), QString());
+    result.source = jsonString(root, QStringLiteral("source"), QString());
+    result.requestId = jsonString(root, QStringLiteral("request_id"), QString());
+    if (root.value(QStringLiteral("frame_id")).isDouble())
+        result.frameId = static_cast<quint64>(root.value(QStringLiteral("frame_id")).toDouble());
+    if (root.value(QStringLiteral("frame_timestamp_ns")).isDouble())
+        result.frameTimestampNs = static_cast<quint64>(
+            root.value(QStringLiteral("frame_timestamp_ns")).toDouble());
+    if (root.value(QStringLiteral("server_latency_ms")).isDouble())
+        result.serverLatencyMs = static_cast<qint64>(
+            root.value(QStringLiteral("server_latency_ms")).toDouble());
     if (root.value(QStringLiteral("latency_ms")).isDouble())
         result.latencyMs = static_cast<qint64>(
             root.value(QStringLiteral("latency_ms")).toDouble());

@@ -17,6 +17,7 @@
 #include "ai_result.h"
 #include "ai_result_client.h"
 #include "main_window.h"
+#include "manual_recognition_client.h"
 #include "preview_shm_reader.h"
 #include "status_controller.h"
 
@@ -105,10 +106,15 @@ int main(int argc, char *argv[])
         QStringList() << QStringLiteral("preview-timeout-ms"),
         QStringLiteral("Preview stale timeout in milliseconds"),
         QStringLiteral("milliseconds"), QStringLiteral("1000"));
+    QCommandLineOption recognizeUrlOption(
+        QStringList() << QStringLiteral("recognize-url"),
+        QStringLiteral("ROCK 2A manual-recognition HTTP URL"),
+        QStringLiteral("url"), QStringLiteral("http://192.168.50.1:9001/recognize"));
     parser.addOption(serverIpOption);
     parser.addOption(serverPortOption);
     parser.addOption(previewShmOption);
     parser.addOption(previewTimeoutOption);
+    parser.addOption(recognizeUrlOption);
     parser.process(app);
 
     const QString serverIp = parser.value(serverIpOption);
@@ -139,6 +145,13 @@ int main(int argc, char *argv[])
         std::fprintf(stderr, "--preview-shm must start with /\n");
         return 2;
     }
+    const QUrl recognizeUrl(parser.value(recognizeUrlOption));
+    if (!recognizeUrl.isValid() || recognizeUrl.scheme() != QStringLiteral("http") ||
+        recognizeUrl.host().isEmpty() || recognizeUrl.path() != QStringLiteral("/recognize")) {
+        std::fprintf(stderr, "Invalid --recognize-url: %s\n",
+                     parser.value(recognizeUrlOption).toLocal8Bit().constData());
+        return 2;
+    }
 
     const QSize screenSize = app.primaryScreen()->size();
     if (screenSize != QSize(720, 720)) {
@@ -146,7 +159,9 @@ int main(int argc, char *argv[])
                      screenSize.width(), screenSize.height());
     }
 
-    MainWindow window;
+    ManualRecognitionClient manualRecognitionClient;
+    manualRecognitionClient.setRecognizeUrl(recognizeUrl);
+    MainWindow window(&manualRecognitionClient);
     StatusController statusController;
     AiResultClient client(serverIp, static_cast<quint16>(portValue));
     PreviewShmReader previewReader(previewShm, previewTimeoutMs);
@@ -169,10 +184,18 @@ int main(int argc, char *argv[])
                      &window, &MainWindow::updatePreviewState);
     QObject::connect(&previewReader, &PreviewShmReader::statsChanged,
                      &window, &MainWindow::updatePreviewStats);
+    QObject::connect(&manualRecognitionClient, &ManualRecognitionClient::requestStarted,
+                     &window, &MainWindow::onManualRequestStarted);
+    QObject::connect(&manualRecognitionClient, &ManualRecognitionClient::requestSucceeded,
+                     &window, &MainWindow::onManualRequestSucceeded);
+    QObject::connect(&manualRecognitionClient, &ManualRecognitionClient::requestFailed,
+                     &window, &MainWindow::onManualRequestFailed);
     QObject::connect(&app, &QCoreApplication::aboutToQuit,
                      &client, &AiResultClient::stop);
     QObject::connect(&app, &QCoreApplication::aboutToQuit,
                      &previewReader, &PreviewShmReader::stop);
+    QObject::connect(&app, &QCoreApplication::aboutToQuit,
+                     &manualRecognitionClient, &ManualRecognitionClient::abort);
 
     QSocketNotifier signalNotifier(signalPipe[0], QSocketNotifier::Read, &app);
     QObject::connect(&signalNotifier, &QSocketNotifier::activated,

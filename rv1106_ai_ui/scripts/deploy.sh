@@ -6,7 +6,7 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_DIR=$(dirname "$SCRIPT_DIR")
 APP="$PROJECT_DIR/build/rv1106_ai_ui"
 TARGET=${RV1106_TARGET:-root@172.32.0.93}
-TARGET_DIR=/root/userdata/rv1106_ai_ui
+TARGET_DIR=/root/userdata/ai_camera/rv1106_ai_ui
 FONT=/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf
 
 if [ ! -x "$APP" ]; then
