@@ -17,6 +17,7 @@ from typing import Any
 
 from qwen_vision_client import QwenVisionClient
 from test_fixed_image import load_qwen_env
+from result_cache import cache, save
 
 
 def write_json_atomically(path: Path, document: dict[str, Any]) -> None:
@@ -46,6 +47,7 @@ class ManualRecognitionServer(ThreadingHTTPServer):
         self.result_path = result_path
         self.max_image_bytes = max_image_bytes
         self.recognize_lock = threading.Lock()
+        self.runtime_root = result_path.parent.parent
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -73,6 +75,9 @@ class Handler(BaseHTTPRequestHandler):
         })
 
     def do_POST(self) -> None:
+        if self.path == "/save-result":
+            self._save_result()
+            return
         if self.path != "/recognize":
             self.send_json(HTTPStatus.NOT_FOUND, {"success": False, "error": "not found"})
             return
@@ -126,6 +131,13 @@ class Handler(BaseHTTPRequestHandler):
             }
             try:
                 write_json_atomically(self.server.result_path, document)
+                cache(self.server.runtime_root, "manual", request_id, image, document, {
+                    "source": "manual", "request_id": request_id, "frame_id": frame_id,
+                    "frame_timestamp_ns": timestamp_ns, "created_at": document["timestamp"],
+                    "model": document.get("model"), "image_bytes": size,
+                    "image_width": None, "image_height": None,
+                    "server_latency_ms": document["server_latency_ms"], **document.get("usage", {}),
+                })
             except OSError:
                 self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {
                     "type": "manual_result", "source": "manual", "request_id": request_id,
@@ -143,6 +155,22 @@ class Handler(BaseHTTPRequestHandler):
             })
         finally:
             self.server.recognize_lock.release()
+
+    def _save_result(self) -> None:
+        if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
+            self.send_json(HTTPStatus.BAD_REQUEST, {"success": False, "error": "content type must be application/json"}); return
+        try:
+            payload = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))).decode("utf-8"))
+            source, request_id = payload.get("source", ""), payload.get("request_id", "")
+            relative, already = save(self.server.runtime_root, source, request_id)
+            self.send_json(HTTPStatus.OK, {"success": True, "source": source, "request_id": request_id,
+                "saved_relative_path": relative, "already_saved": already})
+        except FileNotFoundError:
+            self.send_json(HTTPStatus.NOT_FOUND, {"success": False, "error": "cached result not found"})
+        except (ValueError, json.JSONDecodeError):
+            self.send_json(HTTPStatus.BAD_REQUEST, {"success": False, "error": "invalid save request"})
+        except OSError:
+            self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"success": False, "error": "save failed"})
 
     def do_PUT(self) -> None:
         self.send_json(HTTPStatus.METHOD_NOT_ALLOWED, {"success": False, "error": "method not allowed"})

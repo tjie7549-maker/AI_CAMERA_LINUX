@@ -90,19 +90,23 @@ QLabel#videoWaiting {
 }
 
 QPushButton#pauseButton,
-QPushButton#recognizeButton {
-    background: #226b85;
-    border: 1px solid #44c2d7;
+QPushButton#recognizeButton,
+QPushButton#saveResultButton,
+QPushButton#exitButton {
+    background: #243946;
+    border: 1px solid #416474;
     border-radius: 4px;
-    color: #f2f5f7;
-    font-size: 24px;
+    color: #e6eef2;
+    font-size: 21px;
     font-weight: 700;
 }
 
 QPushButton#pauseButton:pressed,
-QPushButton#recognizeButton:pressed {
-    background: #17495c;
-    border-color: #9eeaf4;
+QPushButton#recognizeButton:pressed,
+QPushButton#saveResultButton:pressed,
+QPushButton#exitButton:pressed {
+    background: #1b2c36;
+    border-color: #61b9c9;
 }
 
 QPushButton#pauseButton:checked {
@@ -111,10 +115,18 @@ QPushButton#pauseButton:checked {
 }
 
 QPushButton#pauseButton:disabled,
-QPushButton#recognizeButton:disabled {
-    background: #3b4650;
-    border-color: #596671;
-    color: #87939d;
+QPushButton#recognizeButton:disabled,
+QPushButton#saveResultButton:disabled,
+QPushButton#exitButton:disabled {
+    background: #1c2730;
+    border-color: #344651;
+    color: #71808a;
+}
+
+QPushButton#exitButton[confirm="true"] {
+    background: #67433d;
+    border-color: #d68370;
+    color: #fff0ea;
 }
 
 QLabel#fieldCaption,

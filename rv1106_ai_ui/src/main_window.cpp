@@ -1,6 +1,7 @@
 #include "main_window.h"
 #include "ai_result_client.h"
 #include "manual_recognition_client.h"
+#include "result_storage_client.h"
 #include "video_widget.h"
 
 #include <QDateTime>
@@ -40,7 +41,7 @@ void addResultField(QVBoxLayout *layout, const QString &caption,
 }
 } // namespace
 
-MainWindow::MainWindow(ManualRecognitionClient *manualClient, QWidget *parent)
+MainWindow::MainWindow(ManualRecognitionClient *manualClient, ResultStorageClient *storageClient, QWidget *parent)
     : QWidget(parent),
       clockLabel_(nullptr),
       videoStatusLabel_(nullptr),
@@ -50,8 +51,10 @@ MainWindow::MainWindow(ManualRecognitionClient *manualClient, QWidget *parent)
       videoInfo_(nullptr),
       videoWaiting_(nullptr),
       manualClient_(manualClient),
+      storageClient_(storageClient),
       pauseButton_(nullptr),
       recognizeButton_(nullptr),
+      saveResultButton_(nullptr), exitButton_(nullptr),
       sceneValue_(nullptr),
       peopleValue_(nullptr),
       objectsValue_(nullptr),
@@ -72,7 +75,7 @@ MainWindow::MainWindow(ManualRecognitionClient *manualClient, QWidget *parent)
       sourceTimestampNs_(0),
       activeRequestFrameId_(0),
       activeRequestTimestampNs_(0),
-      manualRequestSequence_(0)
+      manualRequestSequence_(0), exitConfirm_(false)
 {
     setObjectName(QStringLiteral("root"));
     setWindowFlags(Qt::FramelessWindowHint);
@@ -140,7 +143,7 @@ void MainWindow::buildUi()
     videoPanel->setFixedSize(408, 454);
     auto *videoLayout = new QVBoxLayout(videoPanel);
     videoLayout->setContentsMargins(14, 12, 14, 12);
-    videoLayout->setSpacing(9);
+    videoLayout->setSpacing(6);
     videoLayout->addWidget(makeLabel(QStringLiteral("摄像头预览"),
                                      QStringLiteral("sectionTitle"), videoPanel));
 
@@ -156,33 +159,73 @@ void MainWindow::buildUi()
     videoWaiting_->setAlignment(Qt::AlignCenter);
     videoLayout->addWidget(videoWaiting_);
 
-    auto *buttonLayout = new QHBoxLayout;
+    auto *buttonLayout = new QGridLayout;
     buttonLayout->setContentsMargins(0, 0, 0, 0);
-    buttonLayout->setSpacing(16);
-    buttonLayout->addStretch();
+    buttonLayout->setHorizontalSpacing(12);
+    buttonLayout->setVerticalSpacing(8);
     pauseButton_ = new QPushButton(QStringLiteral("暂停"), videoPanel);
     pauseButton_->setObjectName(QStringLiteral("pauseButton"));
-    pauseButton_->setFixedSize(160, 64);
+    pauseButton_->setFixedSize(184, 48);
     pauseButton_->setCheckable(true);
     pauseButton_->setFocusPolicy(Qt::NoFocus);
     pauseButton_->setAutoRepeat(false);
     connect(pauseButton_, &QPushButton::toggled,
             this, &MainWindow::onPauseToggled);
-    buttonLayout->addWidget(pauseButton_);
+    buttonLayout->addWidget(pauseButton_,0,0);
 
     recognizeButton_ = new QPushButton(QStringLiteral("识别"), videoPanel);
     recognizeButton_->setObjectName(QStringLiteral("recognizeButton"));
-    recognizeButton_->setFixedSize(160, 64);
+    recognizeButton_->setFixedSize(184, 48);
     recognizeButton_->setFocusPolicy(Qt::NoFocus);
     recognizeButton_->setAutoRepeat(false);
     recognizeButton_->setEnabled(false);
     recognizeButton_->setToolTip(QStringLiteral("尚未接入手动识别"));
     connect(recognizeButton_, &QPushButton::clicked,
             this, &MainWindow::onRecognizeClicked);
-    buttonLayout->addWidget(recognizeButton_);
-    buttonLayout->addStretch();
+    buttonLayout->addWidget(recognizeButton_,0,1);
+    saveResultButton_ = new QPushButton(QStringLiteral("保存结果"), videoPanel);
+    saveResultButton_->setObjectName(QStringLiteral("saveResultButton"));
+    saveResultButton_->setFixedSize(184, 48);
+    saveResultButton_->setEnabled(false);
+    saveResultButton_->setFocusPolicy(Qt::NoFocus);
+    connect(saveResultButton_, &QPushButton::clicked, this, [this]() {
+        if (storageClient_ && storageClient_->save(saveSource_, saveRequestId_)) {
+            saveResultButton_->setText(QStringLiteral("保存中…"));
+            saveResultButton_->setEnabled(false);
+        }
+    });
+    buttonLayout->addWidget(saveResultButton_, 1, 0);
+
+    exitButton_ = new QPushButton(QStringLiteral("退出"), videoPanel);
+    exitButton_->setObjectName(QStringLiteral("exitButton"));
+    exitButton_->setFixedSize(184, 48);
+    exitButton_->setFocusPolicy(Qt::NoFocus);
+    connect(exitButton_, &QPushButton::clicked, this, [this]() {
+        if (exitConfirm_) {
+            if (manualClient_)
+                manualClient_->abort();
+            if (storageClient_)
+                storageClient_->abort();
+            emit userExitRequested();
+            return;
+        }
+        exitConfirm_ = true;
+        exitButton_->setText(QStringLiteral("确认退出"));
+        exitButton_->setProperty("confirm", true);
+        exitButton_->style()->unpolish(exitButton_);
+        exitButton_->style()->polish(exitButton_);
+        QTimer::singleShot(3000, this, [this]() {
+            if (!exitConfirm_)
+                return;
+            exitConfirm_ = false;
+            exitButton_->setText(QStringLiteral("退出"));
+            exitButton_->setProperty("confirm", false);
+            exitButton_->style()->unpolish(exitButton_);
+            exitButton_->style()->polish(exitButton_);
+        });
+    });
+    buttonLayout->addWidget(exitButton_, 1, 1);
     videoLayout->addLayout(buttonLayout);
-    videoLayout->addStretch();
     middleLayout->addWidget(videoPanel);
 
     auto *resultPanel = new QFrame(this);
@@ -297,6 +340,13 @@ void MainWindow::updateAiResult(const AiResult &result)
     }
     if (previewUiState_ != PreviewUiState::Live)
         return;
+    if ((result.source == QStringLiteral("auto") || result.source == QStringLiteral("manual")) &&
+        !result.requestId.isEmpty()) {
+        saveSource_ = result.source;
+        saveRequestId_ = result.requestId;
+        saveResultButton_->setText(QStringLiteral("保存结果"));
+        saveResultButton_->setEnabled(true);
+    }
     sceneValue_->setText(result.scene);
     peopleValue_->setText(QString::number(result.peopleCount));
     objectsValue_->setText(result.objects.isEmpty()
@@ -550,6 +600,11 @@ void MainWindow::applyManualResult(const AiResult &result, qint64 totalElapsedMs
         return;
     }
     lastAppliedRequestId_ = result.requestId;
+    saveSource_ = result.source;
+    saveRequestId_ = result.requestId;
+    saveResultButton_->setText(QStringLiteral("保存结果"));
+    saveResultButton_->setEnabled(saveSource_ == QStringLiteral("manual") ||
+                                  saveSource_ == QStringLiteral("auto"));
     sceneValue_->setText(result.scene);
     peopleValue_->setText(QString::number(result.peopleCount));
     objectsValue_->setText(result.objects.isEmpty() ? QStringLiteral("无")
@@ -569,6 +624,9 @@ void MainWindow::applyManualResult(const AiResult &result, qint64 totalElapsedMs
     videoWaiting_->setText(QStringLiteral("暂停帧 %1   识别完成").arg(result.frameId));
     setPreviewUiState(PreviewUiState::ResultReady);
 }
+
+void MainWindow::onSaveSucceeded(const QString&,const QString&,const QString&,bool){saveResultButton_->setText(QStringLiteral("已保存"));saveResultButton_->setEnabled(false);}
+void MainWindow::onSaveFailed(const QString&,const QString&message){saveResultButton_->setText(QStringLiteral("重新保存"));saveResultButton_->setEnabled(true);updateError(message);}
 
 void MainWindow::setStateLabel(QLabel *label, const QString &text,
                                const QString &state)

@@ -16,6 +16,7 @@ from typing import Any
 
 from qwen_vision_client import QwenVisionClient
 from test_fixed_image import load_qwen_env
+from result_cache import cache
 
 
 STOP_REQUESTED = False
@@ -116,8 +117,17 @@ def main() -> int:
         ):
             request_id += 1
             last_request_started = now
-            result = client.analyze_image(str(image_path))
+            try:
+                image_bytes = image_path.read_bytes()
+            except OSError:
+                print("request_id={} image_read_error".format(request_id), flush=True)
+                last_fingerprint = fingerprint
+                continue
+            result = client.analyze_image_bytes(image_bytes, "image/jpeg")
+            request_name = "auto-{}-{:04d}".format(int(time.time() * 1000), request_id)
             document = {
+                "type": "auto_result", "source": "auto", "request_id": request_name,
+                "frame_id": None, "frame_timestamp_ns": None,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "image_path": str(image_path),
                 "model": result["model"],
@@ -125,6 +135,13 @@ def main() -> int:
             }
             try:
                 write_json_atomically(result_path, document)
+                cache(result_path.parent.parent, "auto", request_name, image_bytes, document, {
+                    "source": "auto", "request_id": request_name, "frame_id": None,
+                    "frame_timestamp_ns": None, "created_at": document["timestamp"],
+                    "model": result.get("model"), "image_bytes": len(image_bytes),
+                    "image_width": None, "image_height": None,
+                    "server_latency_ms": result.get("latency_ms"), **result.get("usage", {}),
+                })
             except OSError:
                 print("request_id={} result_write_error".format(request_id), flush=True)
             print_request(request_id, fingerprint, result)

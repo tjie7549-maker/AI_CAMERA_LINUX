@@ -2,7 +2,8 @@
 
 该工程为 Luckfox Pico Ultra（RV1106）的 720x720 Qt Widgets 智能视觉终端。
 程序通过 TCP 从 ROCK 2A 接收一行一个 JSON 的 AI 识别结果，并更新场景、
-人数、物体、告警、摘要、Token 和延迟信息。
+人数、物体、告警、摘要、Token 和延迟信息。手动识别和结果保存分别通过
+ROCK 2A 的 HTTP 服务完成。
 
 ## 当前限制
 
@@ -30,9 +31,12 @@ cd /home/summary/linux/rv1106_ai_ui
 ## 板端运行
 
 ```sh
-cd /root/userdata/rv1106_ai_ui
-./run.sh
+cd /root/userdata/ai_camera
+./run_ai_terminal.sh
 ```
+
+该总控脚本以 `--no-vo` 启动媒体发送端，并让 Qt 独占 LCD。不要在智能视觉模式
+同时启动 VO 预览程序。
 
 默认连接 `192.168.50.1:9000`，可使用环境变量修改：
 
@@ -48,21 +52,31 @@ SERVER_IP=192.168.50.1 SERVER_PORT=9000 ./run.sh
 ./rv1106_ai_ui --help
 ```
 
-按 `Ctrl+C` 正常退出。
+按 `Ctrl+C` 正常退出。触摸界面也支持暂停、识别、保存结果与双击确认退出：退出
+由 `run_ai_terminal.sh` 正常清理媒体资源；通过 ROCK 2A 联动脚本启动时，AI 服务
+也会随之停止。
+
+## 触摸操作
+
+- “暂停/继续”：冻结或恢复 LCD 当前显示帧，后台预览仍持续更新。
+- “识别/重新识别”：只上传冻结帧至 `http://192.168.50.1:9001/recognize`。
+- “保存结果”：仅发送结果来源和请求 ID 至 `http://192.168.50.1:9001/save-result`；
+  图片和识别记录保存在 ROCK 2A，不写入 RV1106 文件系统。
+- “退出”：首次点击显示“确认退出”，3 秒内第二次点击才执行正常退出。
 
 ## 实时预览启动顺序
 
 先在另一个终端启动发送端：
 
 ```sh
-cd /root/userdata
-./run_ai_headless_preview.sh --output /dev/null
+cd /root/userdata/ai_camera
+./rv1106_sender/run_ai_headless_preview.sh --output /dev/null
 ```
 
 再启动 Qt：
 
 ```sh
-cd /root/userdata/rv1106_ai_ui
+cd /root/userdata/ai_camera/rv1106_ai_ui
 ./run.sh
 ```
 

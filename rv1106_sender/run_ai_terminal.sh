@@ -8,6 +8,7 @@ UI="$APP_DIR/rv1106_ai_ui/run.sh"
 LOG_DIR="$APP_DIR/logs"
 SENDER_LOG="$LOG_DIR/sender.log"
 UI_LOG="$LOG_DIR/ui.log"
+USER_EXIT_FILE=/tmp/ai_camera_user_exit
 
 sender_pid=""
 ui_pid=""
@@ -43,6 +44,7 @@ if [ ! -x "$SENDER" ] || [ ! -x "$UI" ]; then
 fi
 
 mkdir -p "$LOG_DIR"
+rm -f "$USER_EXIT_FILE"
 trap on_signal INT TERM
 
 # Keep children out of the terminal foreground process group.  Ctrl+C then
@@ -90,4 +92,9 @@ else
 fi
 ui_pid=""
 cleanup
+if [ "$ui_status" -eq 42 ]; then
+    # The linked ROCK 2A supervisor consumes this marker and stops its services.
+    : >"$USER_EXIT_FILE"
+    echo "Qt user exit requested; camera pipeline stopped."
+fi
 exit "$ui_status"

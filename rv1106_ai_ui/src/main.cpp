@@ -18,6 +18,7 @@
 #include "ai_result_client.h"
 #include "main_window.h"
 #include "manual_recognition_client.h"
+#include "result_storage_client.h"
 #include "preview_shm_reader.h"
 #include "status_controller.h"
 
@@ -161,7 +162,9 @@ int main(int argc, char *argv[])
 
     ManualRecognitionClient manualRecognitionClient;
     manualRecognitionClient.setRecognizeUrl(recognizeUrl);
-    MainWindow window(&manualRecognitionClient);
+    ResultStorageClient storageClient;
+    storageClient.setUrl(QUrl(QStringLiteral("http://192.168.50.1:9001/save-result")));
+    MainWindow window(&manualRecognitionClient, &storageClient);
     StatusController statusController;
     AiResultClient client(serverIp, static_cast<quint16>(portValue));
     PreviewShmReader previewReader(previewShm, previewTimeoutMs);
@@ -190,6 +193,9 @@ int main(int argc, char *argv[])
                      &window, &MainWindow::onManualRequestSucceeded);
     QObject::connect(&manualRecognitionClient, &ManualRecognitionClient::requestFailed,
                      &window, &MainWindow::onManualRequestFailed);
+    QObject::connect(&storageClient,&ResultStorageClient::succeeded,&window,&MainWindow::onSaveSucceeded);
+    QObject::connect(&storageClient,&ResultStorageClient::failed,&window,&MainWindow::onSaveFailed);
+    QObject::connect(&window,&MainWindow::userExitRequested,&app,[&app](){ app.exit(42); });
     QObject::connect(&app, &QCoreApplication::aboutToQuit,
                      &client, &AiResultClient::stop);
     QObject::connect(&app, &QCoreApplication::aboutToQuit,

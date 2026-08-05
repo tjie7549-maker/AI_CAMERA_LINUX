@@ -47,6 +47,10 @@ remote_is_running() {
     " >/dev/null 2>&1
 }
 
+remote_user_exit_requested() {
+    remote_run "test -f '/tmp/ai_camera_user_exit'" >/dev/null 2>&1
+}
+
 start_remote() {
     remote_run "
         set -eu
@@ -56,6 +60,7 @@ start_remote() {
             exit 2
         fi
         rm -f '$RV1106_PID_FILE'
+        rm -f /tmp/ai_camera_user_exit
         cd '$RV1106_DIR'
         setsid sh -c 'echo \$\$ > \"$RV1106_PID_FILE\"; exec ./run_ai_terminal.sh' \
             >'$RV1106_LOG' 2>&1 < /dev/null &
@@ -152,6 +157,12 @@ local_pid=$!
 
 while kill -0 "$local_pid" 2>/dev/null; do
     if ! remote_is_running; then
+        if remote_user_exit_requested; then
+            echo "RV1106 user exit requested; stopping ROCK 2A AI pipeline..."
+            stop_local
+            stop_remote || true
+            exit 0
+        fi
         echo "RV1106 terminal stopped unexpectedly." >&2
         stop_local
         exit 1

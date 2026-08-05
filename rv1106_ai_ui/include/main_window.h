@@ -8,6 +8,7 @@
 
 class QLabel;
 class ManualRecognitionClient;
+class ResultStorageClient;
 class QPushButton;
 class QTimer;
 class VideoWidget;
@@ -17,7 +18,7 @@ class MainWindow : public QWidget {
     Q_OBJECT
 
 public:
-    explicit MainWindow(ManualRecognitionClient *manualClient,
+    explicit MainWindow(ManualRecognitionClient *manualClient, ResultStorageClient *storageClient,
                         QWidget *parent = nullptr);
 
 public slots:
@@ -37,6 +38,10 @@ public slots:
     void onManualRequestFailed(const QString &requestId, quint64 frameId,
                                const QString &message, int httpStatus,
                                qint64 elapsedMs);
+    void onSaveSucceeded(const QString&,const QString&,const QString&,bool);
+    void onSaveFailed(const QString&,const QString&);
+signals:
+    void userExitRequested();
 
 private:
     enum class PreviewUiState {
@@ -74,8 +79,10 @@ private:
     QLabel *videoInfo_;
     QLabel *videoWaiting_;
     ManualRecognitionClient *manualClient_;
+    ResultStorageClient *storageClient_;
     QPushButton *pauseButton_;
     QPushButton *recognizeButton_;
+    QPushButton *saveResultButton_; QPushButton *exitButton_;
 
     QLabel *sceneValue_;
     QLabel *peopleValue_;
@@ -103,6 +110,7 @@ private:
     quint64 activeRequestFrameId_;
     quint64 activeRequestTimestampNs_;
     quint64 manualRequestSequence_;
+    QString saveSource_, saveRequestId_; bool exitConfirm_;
 };
 
 #endif

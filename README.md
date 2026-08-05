@@ -6,8 +6,8 @@ RV1106 摄像头发送端与 ROCK 2A 接收、视觉识别端的单仓库工程�
 SC3336 -> RV1106 ISP/VI/VPSS/VENC -> H.264 RTSP
                                       |
                                       `-> ROCK 2A FFmpeg -> RGB24/JPEG -> Qwen Vision
-                                                                 |
-                                          RV1106 Qt UI <- TCP JSON
+                                                                 |                 |
+                                          RV1106 Qt UI <- TCP JSON      保存图片/结果/元数据
 ```
 
 ## 目录
@@ -69,6 +69,22 @@ cd /root/userdata/ai_camera
 ```
 
 联动入口中，ROCK 2A 先停止 AI 管线，再向 RV1106 总控发送 `SIGTERM`；没有强制结束。ROCK 2A 脚本自动监听 `0.0.0.0:9000`，Qt 默认连接 `192.168.50.1:9000`。
+
+## LCD 操作
+
+Qt 界面以 16:9 显示 DMA-BUF 实时预览，提供以下触摸操作：
+
+1. 点击“暂停”冻结当前显示帧；按钮变为“继续”。
+2. 点击“识别”，将冻结帧 JPEG 发送至 ROCK 2A；完成后显示中文结果与延迟。
+3. 点击“保存结果”，ROCK 2A 按来源保存该次精确 JPEG、完整 JSON 与元数据；同一 `request_id` 重复保存不会产生副本。
+4. 点击“退出”后，3 秒内再次点击“确认退出”，由监督脚本依次正常停止 Qt、摄像头和联动 AI 管线。
+
+保存文件仅存储在 ROCK 2A：
+
+```text
+/home/radxa/AI_CAMERA_LINUX/rock2a_receiver/runtime/saved_results/manual/
+/home/radxa/AI_CAMERA_LINUX/rock2a_receiver/runtime/saved_results/auto/
+```
 
 ## 仓库规则
 

@@ -36,6 +36,8 @@ rock2a_receiver/
 ├── build/                  CMake 编译产物
 ├── artifacts/frames/       历史和后续测试图片
 ├── runtime/ai_cam/         最新图片、识别结果与运行日志
+├── runtime/result_cache/   按 auto/manual 缓存的精确识别输入与结果
+├── runtime/saved_results/  用户确认保存的图片、JSON、元数据与索引
 ├── run_ai_monitor.sh       一键接收与识别脚本
 ├── run_ai_pipeline.sh      自动编译后持续启动识别的入口脚本
 ├── run_linked_ai_camera.sh 双板联动入口
@@ -156,6 +158,33 @@ TCP 结果服务日志：
 python3 -m json.tool \
   /home/radxa/AI_CAMERA_LINUX/rock2a_receiver/runtime/ai_cam/latest_result.json
 ```
+
+## 手动识别与保存结果服务
+
+`run_manual_ai_pipeline.sh` 除 TCP 结果服务外，还监听 `0.0.0.0:9001`：
+
+```text
+POST /recognize    接收 RV1106 暂停帧 JPEG 并返回识别 JSON
+POST /save-result  根据 source 与 request_id 保存已有识别结果
+GET  /health       服务健康检查
+```
+
+每次自动或手动识别都会原子写入以下缓存文件：
+
+```text
+runtime/result_cache/<auto|manual>/<request_id>/image.jpg
+runtime/result_cache/<auto|manual>/<request_id>/result.json
+runtime/result_cache/<auto|manual>/<request_id>/metadata.json
+```
+
+Qt 点击“保存结果”后，服务会复制为：
+
+```text
+runtime/saved_results/<auto|manual>/<YYYY-MM-DD>/<HHMMSS_request_id>/
+```
+
+其中包含精确上传图片、完整识别 JSON 和元数据；`index.jsonl` 使用文件锁维护幂等索引，
+同一来源和请求 ID 不会重复保存。缓存最多保留 100 条，并清理 24 小时前的记录。
 
 ## 手动运行
 
