@@ -22,6 +22,9 @@ case "$MODE" in manual|auto) ;; *) MODE=manual ;; esac
 AUTO_SAVE_POLICY=${AI_CAMERA_AUTO_SAVE_POLICY:-warning}
 AUTO_SAVE_DEDUP_SECONDS=${AI_CAMERA_AUTO_SAVE_DEDUP_SECONDS:-60}
 MIN_FREE_MB=${AI_CAMERA_MIN_FREE_MB:-1024}
+AI_BACKEND=${AI_BACKEND:-cloud}
+NPU_RESULT_PATH=${NPU_RESULT_PATH:-$RUNTIME_DIR/npu_latest.json}
+NPU_SERVER_PORT=${NPU_SERVER_PORT:-9010}
 
 declare -A PIDS
 declare -A FAILS
@@ -60,6 +63,7 @@ stop_all() {
     stop_child manual_server
     stop_child tcp_sender
     stop_child receiver
+    stop_child npu_server
 }
 
 start_one() {
@@ -79,7 +83,13 @@ start_one() {
             setsid "$PYTHON" "$PROJECT_DIR/tools/qwen_vision/manual_recognize_server.py" \
                 --host 0.0.0.0 --port 9001 \
                 --result-path "$RUNTIME_DIR/latest_result.json" \
+                --backend "$AI_BACKEND" --npu-result "$NPU_RESULT_PATH" \
                 --min-free-mb "$MIN_FREE_MB" >>"$LOG_DIR/manual_server.log" 2>&1 &
+            ;;
+        npu_server)
+            setsid "$PYTHON" "$PROJECT_DIR/tools/qwen_vision/npu_result_server.py" \
+                --host 0.0.0.0 --port "$NPU_SERVER_PORT" \
+                --result-path "$NPU_RESULT_PATH" >>"$LOG_DIR/npu_server.log" 2>&1 &
             ;;
         watcher)
             set -a; . "$ENV_FILE"; set +a
@@ -94,6 +104,7 @@ start_one() {
         tcp_sender)
             setsid "$PYTHON" "$PROJECT_DIR/tools/qwen_vision/send_result_tcp.py" \
                 --input "$RUNTIME_DIR/latest_result.json" \
+                --extra-input "$NPU_RESULT_PATH" \
                 --host 0.0.0.0 \
                 --port 9000 >>"$LOG_DIR/tcp_sender.log" 2>&1 &
             ;;
@@ -105,6 +116,7 @@ start_one() {
 start_pipeline() {
     log "starting pipeline components (mode=$MODE)"
     start_one receiver
+    start_one npu_server
     if [ "$MODE" = "manual" ]; then
         start_one manual_server
     else
@@ -217,7 +229,7 @@ while :; do
         exit 0
     fi
 
-    for name in receiver manual_server watcher tcp_sender; do
+    for name in receiver manual_server watcher tcp_sender npu_server; do
         if [ "$name" = "manual_server" ] && [ "$MODE" != "manual" ]; then
             continue
         fi
@@ -241,7 +253,7 @@ while :; do
     done
 
     if [ $((ticks % 600)) -eq 0 ]; then
-        for name in receiver manual_server watcher tcp_sender; do
+        for name in receiver manual_server watcher tcp_sender npu_server; do
             rotate_component_log "$name"
         done
         save_stats

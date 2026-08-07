@@ -175,3 +175,63 @@ cd /root/userdata
 默认预览为 384x216 RGB888，目标 15 FPS。帧像素存在两块 RK MMZ/CMA DMA-BUF 中；`/ai_cam_preview` 仅保存帧序号和尺寸等元数据，不承载像素。两个 DMA-BUF 文件描述符通过 `/tmp/ai_cam_preview.sock` 发给 Qt 接收端。
 
 已验证：150 帧冒烟测试中 RGA 无报错，实际预览约 14.5--15.5 FPS，两路 RTSP 仍分别稳定于约 25 FPS 和 20 FPS。使用 Ctrl+C 停止发送端，程序会先停止预览线程，再依次释放编码、VPSS、VI 和 ISP。
+
+## 本地 NPU 人形检测（端侧推理，可选云端）
+
+RV1106 内置 RKNPU（0.5 TOPS int8），可在摄像头本地运行 yolov5n
+(320x320, int8)，把“依赖云端 API”变成“端侧推理 + 云端可选”。
+
+### 链路
+
+```
+ai_cam 预览 DMA-BUF (/tmp/ai_cam_preview.sock)
+  -> npu_detect（读帧 + letterbox 320x320 + RKNN 推理 + 人形过滤）
+  -> TCP 9010 -> ROCK 2A npu_result_server.py
+  -> runtime/ai_cam/npu_latest.json
+  -> send_result_tcp.py（--extra-input）-> TCP 9000 -> Qt 显示
+```
+
+Qt 结果面板会显示 `场景=端侧NPU`、`人数`、`摘要=本地NPU检测：人×N`。
+
+### 板端运行（RV1106）
+
+```sh
+mkdir -p /root/userdata/npu_detect
+# 交叉编译：arm-rockchip830-linux-uclibcgnueabihf-gcc src/npu_detect.c
+#   -I <rknn_model_zoo>/3rdparty/rknpu2/include -lrknnmrt -lm
+cp npu_detect yolov5n_320.rknn librknnmrt.so /root/userdata/npu_detect/
+sh run_npu_detect.sh          # 独立启动
+```
+
+`run_rv1106_supervisor.sh` 已内置 `start_npu`：检测到
+`/root/userdata/npu_detect/npu_detect` 与模型存在时自动拉起，随链路一起
+看门狗/重启；模型缺失时自动跳过。
+
+模型转换（在 PC/虚拟机的 rknn-toolkit2 1.6.0 环境）：
+
+```sh
+# airockchip/yolov5: python export.py --rknpu --weight yolov5n.pt --imgsz 320
+# luckfox_pico_rknn_example: convert.py <onnx> <dataset> out.rknn Yolov5
+sh convert_yolov5n_320.sh
+```
+
+注意：板端运行库为 librknnmrt 1.6.0，转换工具必须用 rknn-toolkit2 1.6.0；
+RV1106 不支持板端 Python 推理（lite2 只有 aarch64 包），一律使用 C API。
+
+### 云端可选开关（ROCK 2A）
+
+`manual_recognize_server.py` 新增 `--backend cloud|local`（默认 cloud，
+可用环境变量 `AI_BACKEND` 覆盖）：
+
+- `cloud`：保持原行为，手动识别调用千问。
+- `local`：手动识别直接返回最新 NPU 检测结果，不调用云端。
+
+supervisor 启动命令中通过 `AI_BACKEND=local` 切换即可。
+
+### 基准（2026-08-07，yolov5n 320 int8）
+
+- 纯推理：平均 18.3 ms/次，约 54.7 FPS（NPU 独占）。
+- 与发送端/Qt 共存：推理 53.8 FPS，发送端 CPU/RSS 与 Qt CPU/RSS 无变化，
+  预览保持约 14.5 FPS，可用内存波动约 1 MB、无持续增长。
+- 冒烟验证：bus.jpg 检出 3 人（与官方 demo 一致）；实时预览无人时正确输出 0 人。
+

@@ -26,6 +26,8 @@ def parse_args() -> argparse.Namespace:
         description="Send an updated AI result file as newline-delimited JSON"
     )
     parser.add_argument("--input", required=True, type=Path)
+    parser.add_argument("--extra-input", action="append", type=Path, default=[],
+                        help="additional result files to stream (repeatable)")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=9000)
     parser.add_argument("--poll-interval", type=float, default=0.25)
@@ -89,30 +91,31 @@ def client_closed(client: socket.socket, timeout: float) -> bool:
 
 
 def serve_client(client: socket.socket, address: Tuple[str, int],
-                 input_path: Path, poll_interval: float) -> None:
+                 input_paths: list, poll_interval: float) -> None:
     print(f"Client connected: {address[0]}:{address[1]}", flush=True)
-    last_fingerprint: Optional[Tuple[int, int]] = None
+    last_fingerprints: dict = {}
     while True:
         if client_closed(client, poll_interval):
             print("Client disconnected", flush=True)
             return
 
-        fingerprint = file_fingerprint(input_path)
-        if fingerprint is None or fingerprint == last_fingerprint:
-            continue
-        last_fingerprint = fingerprint
-        message = load_message(input_path)
-        if message is None:
-            continue
-        try:
-            client.sendall(message)
-        except (BrokenPipeError, ConnectionResetError, OSError):
-            print("Client disconnected during send", flush=True)
-            return
-        print(f"Sent {len(message)} bytes from {input_path}", flush=True)
+        for input_path in input_paths:
+            fingerprint = file_fingerprint(input_path)
+            if fingerprint is None or fingerprint == last_fingerprints.get(input_path):
+                continue
+            last_fingerprints[input_path] = fingerprint
+            message = load_message(input_path)
+            if message is None:
+                continue
+            try:
+                client.sendall(message)
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                print("Client disconnected during send", flush=True)
+                return
+            print(f"Sent {len(message)} bytes from {input_path}", flush=True)
 
 
-def run_server(host: str, port: int, input_path: Path,
+def run_server(host: str, port: int, input_paths: list,
                poll_interval: float) -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -120,7 +123,8 @@ def run_server(host: str, port: int, input_path: Path,
         server.listen(1)
         server.settimeout(1.0)
         print(f"Listening on {host}:{port}", flush=True)
-        print(f"Watching {input_path}", flush=True)
+        for input_path in input_paths:
+            print(f"Watching {input_path}", flush=True)
 
         while True:
             try:
@@ -129,13 +133,14 @@ def run_server(host: str, port: int, input_path: Path,
                 continue
             with client:
                 client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-                serve_client(client, address, input_path, poll_interval)
+                serve_client(client, address, input_paths, poll_interval)
 
 
 def main() -> int:
     args = parse_args()
+    input_paths = [args.input] + list(args.extra_input)
     try:
-        run_server(args.host, args.port, args.input, args.poll_interval)
+        run_server(args.host, args.port, input_paths, args.poll_interval)
     except KeyboardInterrupt:
         print("\nStopped", flush=True)
         return 0

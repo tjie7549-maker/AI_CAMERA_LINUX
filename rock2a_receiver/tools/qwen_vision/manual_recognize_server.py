@@ -49,6 +49,8 @@ class ManualRecognitionServer(ThreadingHTTPServer):
         self.result_path = result_path
         self.max_image_bytes = max_image_bytes
         self.min_free_mb = min_free_mb
+        self.backend = "cloud"
+        self.npu_result_path = Path("/tmp/ai_cam/npu_latest.json")
         self.recognize_lock = threading.Lock()
         self.runtime_root = result_path.parent.parent
 
@@ -120,6 +122,50 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         started = time.monotonic()
+        if self.server.backend == "local":
+            try:
+                with open(self.server.npu_result_path, "r", encoding="utf-8") as source:
+                    npu_document = json.load(source)
+            except (OSError, json.JSONDecodeError):
+                self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {
+                    "type": "manual_result", "source": "local", "request_id": request_id,
+                    "frame_id": frame_id, "success": False,
+                    "error": "local NPU result unavailable",
+                })
+                self.server.recognize_lock.release()
+                return
+            document: dict[str, Any] = {
+                "type": "manual_result",
+                "source": "local",
+                "request_id": request_id,
+                "frame_id": frame_id,
+                "frame_timestamp_ns": timestamp_ns,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "server_latency_ms": int((time.monotonic() - started) * 1000),
+                **npu_document,
+            }
+            try:
+                write_json_atomically(self.server.result_path, document)
+                cache(self.server.runtime_root, "manual", request_id, image, document, {
+                    "source": "local", "request_id": request_id, "frame_id": frame_id,
+                    "frame_timestamp_ns": timestamp_ns, "created_at": document["timestamp"],
+                    "model": document.get("model"), "image_bytes": size,
+                    "image_width": None, "image_height": None,
+                    "server_latency_ms": document["server_latency_ms"],
+                })
+            except OSError:
+                self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {
+                    "type": "manual_result", "source": "local", "request_id": request_id,
+                    "frame_id": frame_id, "success": False, "error": "result write failed",
+                })
+                self.server.recognize_lock.release()
+                return
+            print("local request_id={} frame_id={} jpeg_bytes={} people={} latency_ms={}".format(
+                request_id, frame_id, size, document.get("peopleCount", 0),
+                document["server_latency_ms"]), flush=True)
+            self.send_json(HTTPStatus.OK, document)
+            self.server.recognize_lock.release()
+            return
         try:
             result = self.server.client.analyze_image_bytes(image, "image/jpeg")
             document: dict[str, Any] = {
@@ -151,7 +197,10 @@ class Handler(BaseHTTPRequestHandler):
             print("manual request_id={} frame_id={} jpeg_bytes={} success={} latency_ms={}".format(
                 request_id, frame_id, size, result["success"], document["server_latency_ms"]), flush=True)
             self.send_json(status, document)
-        except Exception:
+        except Exception as exc:
+            import traceback
+            print("recognize exception: {!r}".format(exc), file=sys.stderr, flush=True)
+            traceback.print_exc()
             self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {
                 "type": "manual_result", "source": "manual", "request_id": request_id,
                 "frame_id": frame_id, "success": False, "error": "internal server error",
@@ -202,6 +251,13 @@ def main() -> int:
     parser.add_argument("--model", default=os.environ.get("QWEN_MODEL", "qwen3-vl-flash"))
     parser.add_argument("--min-free-mb", type=int, default=1024,
                         help="Minimum free disk MiB required for save-result")
+    parser.add_argument("--backend", choices=["cloud", "local"],
+                        default=os.environ.get("AI_BACKEND", "cloud"),
+                        help="cloud: call Qwen; local: use on-device NPU result")
+    parser.add_argument("--npu-result", type=Path,
+                        default=Path(os.environ.get(
+                            "NPU_RESULT_PATH",
+                            "/home/radxa/AI_CAMERA_LINUX/rock2a_receiver/runtime/npu_latest.json")))
     args = parser.parse_args()
     if not 1 <= args.port <= 65535 or args.max_image_bytes <= 4 or args.min_free_mb < 0:
         parser.error("invalid port/max image size/min free")
@@ -211,8 +267,10 @@ def main() -> int:
     server = ManualRecognitionServer((args.host, args.port), Handler,
                                      QwenVisionClient(), args.result_path,
                                      args.max_image_bytes, args.min_free_mb)
-    print("Manual recognition listening on {}:{} (min-free {} MiB)".format(
-        args.host, args.port, args.min_free_mb), flush=True)
+    server.backend = args.backend
+    server.npu_result_path = args.npu_result
+    print("Manual recognition listening on {}:{} (backend={}, min-free {} MiB)".format(
+        args.host, args.port, args.backend, args.min_free_mb), flush=True)
     try:
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:

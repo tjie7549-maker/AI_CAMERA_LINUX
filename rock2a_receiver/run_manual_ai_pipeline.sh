@@ -8,9 +8,12 @@ PYTHON="$PROJECT_DIR/.venv-qwen/bin/python"
 ENV_FILE="$HOME/.config/ai_cam/qwen.env"
 RUNTIME_DIR="$PROJECT_DIR/runtime/ai_cam"
 RESULT_PATH="$RUNTIME_DIR/latest_result.json"
+NPU_RESULT_PATH="${NPU_RESULT_PATH:-$RUNTIME_DIR/npu_latest.json}"
 FRAME_DIR="$PROJECT_DIR/artifacts/frames/manual_monitor"
 URL="${RTSP_URL:-rtsp://192.168.50.2:554/live/1}"
 SERVER_PORT="${MANUAL_RECOGNIZE_PORT:-9001}"
+NPU_SERVER_PORT="${NPU_SERVER_PORT:-9010}"
+AI_BACKEND="${AI_BACKEND:-cloud}"
 
 for required in "$RECEIVER" "$PYTHON" "$ENV_FILE"; do
     if [ ! -e "$required" ]; then
@@ -29,6 +32,7 @@ set +a
 receiver_pid=""
 server_pid=""
 tcp_pid=""
+npu_pid=""
 stopping=0
 
 stop_child() {
@@ -42,7 +46,8 @@ cleanup() {
     stop_child "$receiver_pid"
     stop_child "$server_pid"
     stop_child "$tcp_pid"
-    for pid in "$receiver_pid" "$server_pid" "$tcp_pid"; do
+    stop_child "$npu_pid"
+    for pid in "$receiver_pid" "$server_pid" "$tcp_pid" "$npu_pid"; do
         if [ -n "$pid" ]; then wait "$pid" 2>/dev/null || true; fi
     done
 }
@@ -61,23 +66,34 @@ trap on_signal INT TERM
 setsid "$RECEIVER" --url "$URL" --output "$FRAME_DIR" --interval-ms 5000 \
     --duration 0 >"$RUNTIME_DIR/manual_receiver.log" 2>&1 &
 receiver_pid=$!
+setsid "$PYTHON" "$PROJECT_DIR/tools/qwen_vision/npu_result_server.py" \
+    --host 0.0.0.0 --port "$NPU_SERVER_PORT" --result-path "$NPU_RESULT_PATH" \
+    >"$RUNTIME_DIR/npu_result_server.log" 2>&1 &
+npu_pid=$!
 setsid "$PYTHON" "$PROJECT_DIR/tools/qwen_vision/manual_recognize_server.py" \
     --host 0.0.0.0 --port "$SERVER_PORT" --result-path "$RESULT_PATH" \
+    --backend "$AI_BACKEND" --npu-result "$NPU_RESULT_PATH" \
     >"$RUNTIME_DIR/manual_server.log" 2>&1 &
 server_pid=$!
 setsid "$PYTHON" "$PROJECT_DIR/tools/qwen_vision/send_result_tcp.py" \
-    --input "$RESULT_PATH" --host "${RESULT_HOST:-0.0.0.0}" \
+    --input "$RESULT_PATH" --extra-input "$NPU_RESULT_PATH" \
+    --host "${RESULT_HOST:-0.0.0.0}" \
     --port "${RESULT_PORT:-9000}" >"$RUNTIME_DIR/result_tcp.log" 2>&1 &
 tcp_pid=$!
 
 for _ in $(seq 1 15); do
-    if "$PYTHON" -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:${SERVER_PORT}/health', timeout=1).read()" >/dev/null 2>&1; then
+    if "$PYTHON" -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:${SERVER_PORT}/health', timeout=1).read()" >/dev/null 2>&1 && kill -0 "$npu_pid" 2>/dev/null; then
         echo "Manual recognition ready: http://0.0.0.0:${SERVER_PORT}/recognize"
         echo "Press Ctrl+C to stop."
         break
     fi
     if ! kill -0 "$server_pid" 2>/dev/null; then
         echo "Manual recognition server failed. See $RUNTIME_DIR/manual_server.log" >&2
+        cleanup
+        exit 1
+    fi
+    if ! kill -0 "$npu_pid" 2>/dev/null; then
+        echo "NPU result server failed. See $RUNTIME_DIR/npu_result_server.log" >&2
         cleanup
         exit 1
     fi
@@ -89,8 +105,13 @@ if ! "$PYTHON" -c "import urllib.request; urllib.request.urlopen('http://127.0.0
     cleanup
     exit 1
 fi
+if ! kill -0 "$npu_pid" 2>/dev/null; then
+    echo "NPU result server failed. See $RUNTIME_DIR/npu_result_server.log" >&2
+    cleanup
+    exit 1
+fi
 
-while kill -0 "$receiver_pid" 2>/dev/null && kill -0 "$server_pid" 2>/dev/null && kill -0 "$tcp_pid" 2>/dev/null; do
+while kill -0 "$receiver_pid" 2>/dev/null && kill -0 "$server_pid" 2>/dev/null && kill -0 "$tcp_pid" 2>/dev/null && kill -0 "$npu_pid" 2>/dev/null; do
     sleep 1
 done
 cleanup
