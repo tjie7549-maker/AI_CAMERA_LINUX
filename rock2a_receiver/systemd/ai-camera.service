@@ -1,0 +1,19 @@
+[Unit]
+Description=AI Camera ROCK 2A pipeline supervisor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=radxa
+Group=radxa
+WorkingDirectory=/home/radxa/AI_CAMERA_LINUX/rock2a_receiver
+EnvironmentFile=-/etc/ai-camera.env
+ExecStart=/home/radxa/AI_CAMERA_LINUX/rock2a_receiver/run_rock2a_supervisor.sh
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Install]
+WantedBy=multi-user.target

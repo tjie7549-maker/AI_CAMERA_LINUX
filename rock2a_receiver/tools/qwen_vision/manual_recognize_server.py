@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import threading
 import time
 from datetime import datetime, timezone
@@ -41,11 +42,13 @@ def write_json_atomically(path: Path, document: dict[str, Any]) -> None:
 
 class ManualRecognitionServer(ThreadingHTTPServer):
     def __init__(self, address: tuple[str, int], handler: type[BaseHTTPRequestHandler],
-                 client: QwenVisionClient, result_path: Path, max_image_bytes: int) -> None:
+                 client: QwenVisionClient, result_path: Path, max_image_bytes: int,
+                 min_free_mb: int) -> None:
         super().__init__(address, handler)
         self.client = client
         self.result_path = result_path
         self.max_image_bytes = max_image_bytes
+        self.min_free_mb = min_free_mb
         self.recognize_lock = threading.Lock()
         self.runtime_root = result_path.parent.parent
 
@@ -162,6 +165,17 @@ class Handler(BaseHTTPRequestHandler):
         try:
             payload = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))).decode("utf-8"))
             source, request_id = payload.get("source", ""), payload.get("request_id", "")
+            try:
+                free_mb = shutil.disk_usage(self.server.runtime_root).free / (1024 * 1024)
+            except OSError:
+                free_mb = -1.0
+            if 0 <= free_mb < self.server.min_free_mb:
+                self.send_json(HTTPStatus.INSUFFICIENT_STORAGE, {
+                    "success": False,
+                    "error": "disk space insufficient: {:.0f} MiB free, need {} MiB".format(
+                        free_mb, self.server.min_free_mb),
+                })
+                return
             relative, already = save(self.server.runtime_root, source, request_id)
             self.send_json(HTTPStatus.OK, {"success": True, "source": source, "request_id": request_id,
                 "saved_relative_path": relative, "already_saved": already})
@@ -186,16 +200,19 @@ def main() -> int:
     parser.add_argument("--max-image-bytes", type=int, default=1048576)
     parser.add_argument("--result-path", type=Path, default=Path("/tmp/ai_cam/latest_result.json"))
     parser.add_argument("--model", default=os.environ.get("QWEN_MODEL", "qwen3-vl-flash"))
+    parser.add_argument("--min-free-mb", type=int, default=1024,
+                        help="Minimum free disk MiB required for save-result")
     args = parser.parse_args()
-    if not 1 <= args.port <= 65535 or args.max_image_bytes <= 4:
-        parser.error("invalid port or max image size")
+    if not 1 <= args.port <= 65535 or args.max_image_bytes <= 4 or args.min_free_mb < 0:
+        parser.error("invalid port/max image size/min free")
 
     load_qwen_env()
     os.environ["QWEN_MODEL"] = args.model
     server = ManualRecognitionServer((args.host, args.port), Handler,
                                      QwenVisionClient(), args.result_path,
-                                     args.max_image_bytes)
-    print("Manual recognition listening on {}:{}".format(args.host, args.port), flush=True)
+                                     args.max_image_bytes, args.min_free_mb)
+    print("Manual recognition listening on {}:{} (min-free {} MiB)".format(
+        args.host, args.port, args.min_free_mb), flush=True)
     try:
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
