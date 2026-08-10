@@ -19,7 +19,7 @@ class MainWindow : public QWidget {
 
 public:
     explicit MainWindow(ManualRecognitionClient *manualClient, ResultStorageClient *storageClient,
-                        QWidget *parent = nullptr);
+                        int autoRecognitionIntervalMs, QWidget *parent = nullptr);
 
 public slots:
     void updateAiResult(const AiResult &result);
@@ -31,13 +31,14 @@ public slots:
                             qulonglong sourceTimeNs);
     void updatePreviewState(int state);
     void updatePreviewStats(const QString &line1, const QString &line2);
-    void onManualRequestStarted(const QString &requestId, quint64 frameId,
-                                int jpegBytes);
-    void onManualRequestSucceeded(const QString &requestId, quint64 frameId,
+    void onRecognitionRequestStarted(const QString &source, const QString &requestId,
+                                     quint64 frameId, int jpegBytes);
+    void onRecognitionRequestSucceeded(const QString &source, const QString &requestId,
+                                       quint64 frameId,
                                   const QJsonObject &result, qint64 elapsedMs);
-    void onManualRequestFailed(const QString &requestId, quint64 frameId,
-                               const QString &message, int httpStatus,
-                               qint64 elapsedMs);
+    void onRecognitionRequestFailed(const QString &source, const QString &requestId,
+                                    quint64 frameId, const QString &message,
+                                    int httpStatus, qint64 elapsedMs);
     void onSaveSucceeded(const QString&,const QString&,const QString&,bool);
     void onSaveFailed(const QString&,const QString&);
 signals:
@@ -65,6 +66,8 @@ private:
     void showDefaultState();
     void onPauseToggled(bool checked);
     void onRecognizeClicked();
+    void onAutoRecognitionTimeout();
+    void updateAutoRecognitionTimer();
     void setPreviewUiState(PreviewUiState state);
     void updateVideoStatus();
     void applyManualResult(const AiResult &result, qint64 totalElapsedMs);
@@ -100,16 +103,21 @@ private:
     QLabel *errorValue_;
 
     QTimer *clockTimer_;
+    QTimer *autoRecognitionTimer_;
+    int autoRecognitionIntervalMs_;
     PreviewUiState previewUiState_;
     int previewStreamState_;
+    bool sentinelActive_;
     qulonglong sourceFrameId_;
     qulonglong sourceTimestampNs_;
     FrozenFrameSnapshot requestSnapshot_;
+    QString activeRequestSource_;
     QString activeRequestId_;
     QString lastAppliedRequestId_;
     quint64 activeRequestFrameId_;
     quint64 activeRequestTimestampNs_;
     quint64 manualRequestSequence_;
+    quint64 autoRequestSequence_;
     QString saveSource_, saveRequestId_; bool exitConfirm_;
 };
 

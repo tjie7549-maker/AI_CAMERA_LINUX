@@ -19,6 +19,9 @@ struct AiResult {
           totalTokens(0),
           timestamp(QStringLiteral("-")),
           success(false),
+          hasSentinelState(false),
+          sentinelActive(false),
+          displayAwake(false),
           frameId(0),
           frameTimestampNs(0),
           serverLatencyMs(0)
@@ -41,6 +44,9 @@ struct AiResult {
 
     QString timestamp;
     bool success;
+    bool hasSentinelState;
+    bool sentinelActive;
+    bool displayAwake;
 
     QString type;
     QString source;

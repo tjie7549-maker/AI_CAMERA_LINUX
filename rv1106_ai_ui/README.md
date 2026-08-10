@@ -2,8 +2,9 @@
 
 该工程为 Luckfox Pico Ultra（RV1106）的 720x720 Qt Widgets 智能视觉终端。
 程序通过 TCP 从 ROCK 2A 接收一行一个 JSON 的 AI 识别结果，并更新场景、
-人数、物体、告警、摘要、Token 和延迟信息。手动识别和结果保存分别通过
-ROCK 2A 的 HTTP 服务完成。
+人数、物体、告警、摘要、Token 和延迟信息。NPU 检测到人员且界面保持实时
+预览时，Qt 每 30 秒通过 ROCK 2A 的 HTTP 服务自动识别一次；暂停后自动周期
+停止，只允许用户识别当前冻结帧。
 
 ## 当前限制
 
@@ -44,11 +45,15 @@ cd /root/userdata/ai_camera
 SERVER_IP=192.168.50.1 SERVER_PORT=9000 ./run.sh
 ```
 
+自动识别间隔默认 30000 毫秒，可在测试时通过
+`AUTO_RECOGNITION_INTERVAL_MS` 修改。生产使用建议保持 30 秒。
+
 直接运行程序时支持：
 
 ```sh
 ./rv1106_ai_ui --server-ip 192.168.50.1 --server-port 9000 \
-  --preview-shm /ai_cam_preview --preview-timeout-ms 1000
+  --preview-shm /ai_cam_preview --preview-timeout-ms 1000 \
+  --auto-recognition-interval-ms 30000
 ./rv1106_ai_ui --help
 ```
 
@@ -58,8 +63,11 @@ SERVER_IP=192.168.50.1 SERVER_PORT=9000 ./run.sh
 
 ## 触摸操作
 
-- “暂停/继续”：冻结或恢复 LCD 当前显示帧，后台预览仍持续更新。
-- “识别/重新识别”：只上传冻结帧至 `http://192.168.50.1:9001/recognize`。
+- 实时预览：NPU 值守状态为 active 时，每 30 秒上传一张当前显示帧进行自动识别；
+  无人时不发起云端请求。
+- “暂停/继续”：暂停会停止自动周期并冻结 LCD 当前帧；继续后重新从 30 秒计时。
+- “识别/重新识别”：暂停后只上传冻结帧至
+  `http://192.168.50.1:9001/recognize`，不会与自动请求并发。
 - “保存结果”：仅发送结果来源和请求 ID 至 `http://192.168.50.1:9001/save-result`；
   图片和识别记录保存在 ROCK 2A，不写入 RV1106 文件系统。
 - “退出”：首次点击显示“确认退出”，3 秒内第二次点击才执行正常退出。

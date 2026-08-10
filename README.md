@@ -42,18 +42,19 @@ rtsp://192.168.50.2:554/live/1   子码流 640x360，20 FPS
 │       ├─ ch0: 中心裁剪 1296x1296 -> 720x720 -> LCD（Qt 独占，no-VO）              │
 │       ├─ ch1: 1280x720 H.264 -> RTSP /live/0（约 25 FPS）                         │
 │       ├─ ch2: 640x360 H.264 -> RTSP /live/1（约 20 FPS）                          │
-│       └─ ch3: 384x216 -> RGA -> DMA-BUF -> Qt 实时预览（约 15 FPS）               │
+│       └─ ch3: 384x216 -> RGA -> DMA-BUF -> Qt 预览 + NPU 人形检测                 │
 │                                                                                   │
 │  supervisor（/etc/init.d/S95ai-camera 开机自启）                                  │
-│    拉起 ai_cam + Qt -> 监控/退避重启 -> 内存看门狗 -> 日志轮转                    │
+│    拉起 ai_cam + Qt + NPU -> 无人熄背光/有人唤醒 -> 看门狗与日志轮转              │
 └───────────────────────────────┬───────────────────────────────────────────────────┘
                                 │ RTSP H.264 双码流（192.168.50.2 ⇄ 192.168.50.1）
 ┌───────────────────────────────▼───────────────────────────────────────────────────┐
 │ ROCK 2A（接收/识别端）                                                             │
 │ systemd ai-camera.service -> ROCK Supervisor（唯一重启决策层）                    │
 │   ├─ RTSP 接收器（FFmpeg 解码） -> runtime/ai_cam/latest.jpg                     │
-│   ├─ watcher（自动识别） -> 千问视觉 -> latest_result.json                        │
-│   ├─ HTTP 9001：手动识别 / 保存（磁盘保护、幂等）                                  │
+│   ├─ NPU 值守状态（TCP 9010）：只传人数与唤醒状态                                  │
+│   ├─ HTTP 9001：Qt 每 30 秒自动识别 / 暂停帧手动识别 / 保存                        │
+│   ├─ watcher：仅供无 Qt 的 headless 专项测试                                      │
 │   ├─ TCP 9000：结果回传 -> RV1106 Qt 显示                                          │
 │   └─ 自动保存策略 none/warning/all + 60s 去重 -> saved_results/{manual,auto}      │
 └────────────────────────────────────────────────────────────────────────────────────┘
@@ -108,6 +109,16 @@ rtsp://192.168.50.2:554/live/1   子码流 640x360，20 FPS
 - 每 10 秒检查 MemAvailable，低于 40MB 且持续 30 秒自动重启整套链路，释放媒体缓冲；
 - 实测：40.8MB -> 117MB 自动恢复，避免 OOM（厂商媒体栈存在 CMA 缓冲累积问题，
   该看门狗为产品化缓解）。
+
+### 8. NPU 本地值守
+
+- 摄像头、RTSP、Qt 和 NPU 始终运行，只关闭 LCD 背光，不反复初始化媒体管线；
+- 连续检测到人员 3 次后立即点亮背光；连续无人 30 秒后关闭背光；
+- NPU 只在 RV1106 本地处理预览帧，向 ROCK 2A 发送人数与值守状态，不把
+  NPU 输入图像上传云端；
+- 值守 active 且界面处于实时预览时，Qt 每 30 秒上传一张当前帧调用千问；
+- 点击“暂停”立即停止新的自动周期，之后仅由“识别”按钮提交冻结帧；
+- NPU 退出时恢复背光，避免服务停止后 LCD 保持黑屏。
 
 ## 构建与运行
 
@@ -182,7 +193,7 @@ EOF
 sudo systemctl daemon-reload
 sudo systemctl enable --now ai-camera.service
 
-# 4) 模式文件（manual|auto）
+# 4) 模式文件（智能终端推荐 manual；由 Qt 统一调度自动与手动识别）
 echo manual > /home/radxa/.config/ai_cam/mode
 
 # 5) API Key（不进入仓库/systemd）
@@ -205,7 +216,8 @@ sudo systemctl restart ai-camera   # 重启
 systemctl status ai-camera         # 状态
 ```
 
-端口：RV1106 `554`（RTSP）；ROCK 2A `9000`（TCP 回传）、`9001`（HTTP 手动识别/保存）。
+端口：RV1106 `554`（RTSP）；ROCK 2A `9000`（TCP 回传）、`9001`（HTTP 自动/手动
+识别与保存）、`9010`（NPU 值守元数据）。
 
 ### 故障恢复手册
 
@@ -269,10 +281,11 @@ ROCK 2A： rock2a_receiver/runtime/logs/{supervisor,rtsp_receiver,manual_server,
 
 Qt 界面以 16:9 显示 DMA-BUF 实时预览，提供以下触摸操作：
 
-1. 点击“暂停”冻结当前显示帧；按钮变为“继续”。
-2. 点击“识别”，将冻结帧 JPEG 发送至 ROCK 2A；完成后显示中文结果与延迟。
-3. 点击“保存结果”，ROCK 2A 按来源保存该次精确 JPEG、完整 JSON 与元数据；同一 `request_id` 重复保存不会产生副本。
-4. 点击“退出”后，3 秒内再次点击“确认退出”，由监督脚本依次正常停止 Qt、摄像头和联动 AI 管线。
+1. NPU 检测到人员后唤醒 LCD；实时预览期间每 30 秒自动识别一次。
+2. 点击“暂停”停止自动识别并冻结当前显示帧；按钮变为“继续”。
+3. 点击“识别”，将冻结帧 JPEG 发送至 ROCK 2A；完成后显示中文结果与延迟。
+4. 点击“保存结果”，ROCK 2A 按来源保存该次精确 JPEG、完整 JSON 与元数据；同一 `request_id` 重复保存不会产生副本。
+5. 点击“退出”后，3 秒内再次点击“确认退出”，由监督脚本依次正常停止 Qt、摄像头和联动 AI 管线。
 
 保存文件仅存储在 ROCK 2A：
 

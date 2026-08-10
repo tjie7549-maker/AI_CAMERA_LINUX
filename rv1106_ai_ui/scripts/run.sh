@@ -47,4 +47,5 @@ exec ./rv1106_ai_ui \
     --server-port "${SERVER_PORT:-9000}" \
     --preview-shm "${PREVIEW_SHM:-/ai_cam_preview}" \
     --preview-timeout-ms "${PREVIEW_TIMEOUT_MS:-1000}" \
+    --auto-recognition-interval-ms "${AUTO_RECOGNITION_INTERVAL_MS:-30000}" \
     "$@"

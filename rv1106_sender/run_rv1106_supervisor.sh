@@ -28,6 +28,9 @@ NPU_LOG=$LOG_DIR/npu_detect.log
 NPU_SERVER_IP=${NPU_SERVER_IP:-192.168.50.1}
 NPU_SERVER_PORT=${NPU_SERVER_PORT:-9010}
 NPU_INTERVAL_MS=${NPU_INTERVAL_MS:-300}
+NPU_IDLE_SECONDS=${NPU_IDLE_SECONDS:-30}
+NPU_WAKE_HITS=${NPU_WAKE_HITS:-3}
+NPU_BACKLIGHT_PATH=${NPU_BACKLIGHT_PATH:-/sys/class/backlight/backlight/bl_power}
 RESTART_COUNT=0
 CONSECUTIVE_FAILS=0
 FIRST_RESTART_TS=0
@@ -115,6 +118,8 @@ start_npu() {
     setsid env LD_LIBRARY_PATH="$NPU_DIR" "$NPU_BIN" \
         --model "$NPU_MODEL" --server-ip "$NPU_SERVER_IP" \
         --port "$NPU_SERVER_PORT" --interval-ms "$NPU_INTERVAL_MS" \
+        --idle-seconds "$NPU_IDLE_SECONDS" --wake-hits "$NPU_WAKE_HITS" \
+        --backlight-path "$NPU_BACKLIGHT_PATH" \
         >>"$NPU_LOG" 2>&1 &
     npu_pid=$!
     log "npu_detect started (pid=$npu_pid)"
@@ -280,10 +285,15 @@ while :; do
 
     sender_alive=0
     qt_alive=0
+    npu_alive=1
     [ -n "$sender_pid" ] && kill -0 "$sender_pid" 2>/dev/null && sender_alive=1
     [ -n "$qt_pid" ] && kill -0 "$qt_pid" 2>/dev/null && qt_alive=1
+    if [ -x "$NPU_BIN" ] && [ -f "$NPU_MODEL" ]; then
+        npu_alive=0
+        [ -n "$npu_pid" ] && kill -0 "$npu_pid" 2>/dev/null && npu_alive=1
+    fi
 
-    if [ "$sender_alive" -eq 1 ] && [ "$qt_alive" -eq 1 ]; then
+    if [ "$sender_alive" -eq 1 ] && [ "$qt_alive" -eq 1 ] && [ "$npu_alive" -eq 1 ]; then
         ticks=$((ticks + 1))
         if [ $((ticks % 30)) -eq 0 ]; then
             rotate_logs
@@ -329,7 +339,7 @@ while :; do
         fi
     fi
 
-    log "chain abnormal: sender_alive=$sender_alive qt_alive=$qt_alive; restarting"
+    log "chain abnormal: sender_alive=$sender_alive qt_alive=$qt_alive npu_alive=$npu_alive; restarting"
     stop_chain
     if ! restart_chain; then
         log "restart limit reached; supervisor giving up"

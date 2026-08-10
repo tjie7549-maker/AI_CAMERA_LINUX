@@ -38,6 +38,30 @@ def image_fingerprint(path: Path) -> tuple[int, int] | None:
     return stat.st_mtime_ns, stat.st_size
 
 
+def presence_active(path: Path | None, stale_seconds: float) -> tuple[bool, str]:
+    if path is None:
+        return True, "disabled"
+    try:
+        status = path.stat()
+        if time.time() - status.st_mtime > stale_seconds:
+            return False, "stale"
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return False, "missing"
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return False, "invalid"
+
+    active = document.get("sentinel_active")
+    if isinstance(active, bool):
+        return active, "active" if active else "idle"
+    result = document.get("result", {})
+    try:
+        people = int(result.get("people_count", 0))
+    except (AttributeError, TypeError, ValueError):
+        people = 0
+    return people > 0, "legacy-person-count"
+
+
 def write_json_atomically(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_name = ""
@@ -141,9 +165,25 @@ def main() -> int:
         default=1024,
         help="Minimum free disk MiB required for auto-save",
     )
+    parser.add_argument(
+        "--presence-result",
+        type=Path,
+        help="NPU sentinel result; cloud requests pause while presence is idle/stale",
+    )
+    parser.add_argument(
+        "--presence-stale-seconds",
+        type=float,
+        default=3.0,
+        help="Treat the NPU sentinel as idle after this many seconds without an update",
+    )
     args = parser.parse_args()
-    if args.interval_ms <= 0 or args.auto_save_dedup_seconds < 0 or args.min_free_mb < 0:
-        parser.error("interval/dedup/min-free must be non-negative")
+    if (
+        args.interval_ms <= 0
+        or args.auto_save_dedup_seconds < 0
+        or args.min_free_mb < 0
+        or args.presence_stale_seconds <= 0
+    ):
+        parser.error("invalid interval, dedup, disk, or presence timeout value")
 
     load_qwen_env()
     client = QwenVisionClient()
@@ -156,12 +196,30 @@ def main() -> int:
     request_id = 0
     successes = failures = invalid_json = 0
     total_latency_ms = total_input_tokens = total_output_tokens = total_tokens = 0
+    last_presence: bool | None = None
 
     signal.signal(signal.SIGINT, on_signal)
     signal.signal(signal.SIGTERM, on_signal)
     interval_seconds = args.interval_ms / 1000.0
 
     while not STOP_REQUESTED:
+        is_active, presence_reason = presence_active(
+            args.presence_result, args.presence_stale_seconds
+        )
+        if is_active != last_presence:
+            print(
+                "sentinel state={} reason={}".format(
+                    "active" if is_active else "idle", presence_reason
+                ),
+                flush=True,
+            )
+            if is_active:
+                last_request_started = 0.0
+            last_presence = is_active
+        if not is_active:
+            time.sleep(min(0.2, interval_seconds))
+            continue
+
         fingerprint = image_fingerprint(image_path)
         now = time.monotonic()
         if (

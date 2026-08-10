@@ -84,6 +84,21 @@ qulonglong VideoWidget::frozenTimestampNs() const
     return frozenTimestampNs_;
 }
 
+QImage VideoWidget::displayedLiveImageCopy() const
+{
+    return displayedLiveImage_.copy();
+}
+
+qulonglong VideoWidget::displayedLiveFrameId() const
+{
+    return displayedLiveFrameId_;
+}
+
+qulonglong VideoWidget::displayedLiveTimestampNs() const
+{
+    return displayedLiveTimestampNs_;
+}
+
 void VideoWidget::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event)

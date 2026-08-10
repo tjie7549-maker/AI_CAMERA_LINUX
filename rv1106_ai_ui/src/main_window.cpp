@@ -41,7 +41,9 @@ void addResultField(QVBoxLayout *layout, const QString &caption,
 }
 } // namespace
 
-MainWindow::MainWindow(ManualRecognitionClient *manualClient, ResultStorageClient *storageClient, QWidget *parent)
+MainWindow::MainWindow(ManualRecognitionClient *manualClient,
+                       ResultStorageClient *storageClient,
+                       int autoRecognitionIntervalMs, QWidget *parent)
     : QWidget(parent),
       clockLabel_(nullptr),
       videoStatusLabel_(nullptr),
@@ -69,13 +71,18 @@ MainWindow::MainWindow(ManualRecognitionClient *manualClient, ResultStorageClien
       tcpValue_(nullptr),
       errorValue_(nullptr),
       clockTimer_(new QTimer(this)),
+      autoRecognitionTimer_(new QTimer(this)),
+      autoRecognitionIntervalMs_(autoRecognitionIntervalMs),
       previewUiState_(PreviewUiState::Live),
       previewStreamState_(0),
+      sentinelActive_(false),
       sourceFrameId_(0),
       sourceTimestampNs_(0),
       activeRequestFrameId_(0),
       activeRequestTimestampNs_(0),
-      manualRequestSequence_(0), exitConfirm_(false)
+      manualRequestSequence_(0),
+      autoRequestSequence_(0),
+      exitConfirm_(false)
 {
     setObjectName(QStringLiteral("root"));
     setWindowFlags(Qt::FramelessWindowHint);
@@ -87,6 +94,9 @@ MainWindow::MainWindow(ManualRecognitionClient *manualClient, ResultStorageClien
     connect(clockTimer_, &QTimer::timeout,
             this, &MainWindow::updateCurrentTime);
     clockTimer_->start(1000);
+    autoRecognitionTimer_->setInterval(autoRecognitionIntervalMs_);
+    connect(autoRecognitionTimer_, &QTimer::timeout,
+            this, &MainWindow::onAutoRecognitionTimeout);
     updateCurrentTime();
 }
 
@@ -179,7 +189,7 @@ void MainWindow::buildUi()
     recognizeButton_->setFocusPolicy(Qt::NoFocus);
     recognizeButton_->setAutoRepeat(false);
     recognizeButton_->setEnabled(false);
-    recognizeButton_->setToolTip(QStringLiteral("尚未接入手动识别"));
+    recognizeButton_->setToolTip(QStringLiteral("请先暂停当前画面"));
     connect(recognizeButton_, &QPushButton::clicked,
             this, &MainWindow::onRecognizeClicked);
     buttonLayout->addWidget(recognizeButton_,0,1);
@@ -330,6 +340,10 @@ void MainWindow::showDefaultState()
 
 void MainWindow::updateAiResult(const AiResult &result)
 {
+    if (result.hasSentinelState) {
+        sentinelActive_ = result.sentinelActive;
+        updateAutoRecognitionTimer();
+    }
     if (result.source == QStringLiteral("manual")) {
         if (result.requestId.isEmpty() || result.requestId == lastAppliedRequestId_ ||
             result.requestId != activeRequestId_ || result.frameId != activeRequestFrameId_) {
@@ -436,6 +450,7 @@ void MainWindow::updatePreviewState(int state)
     previewStreamState_ = state;
     updateVideoStatus();
     videoWidget_->setState(state);
+    updateAutoRecognitionTimer();
 }
 
 void MainWindow::updatePreviewStats(const QString &line1, const QString &line2)
@@ -490,30 +505,81 @@ void MainWindow::onRecognizeClicked()
     activeRequestId_ = QStringLiteral("manual-%1-%2")
                            .arg(QDateTime::currentDateTimeUtc().toMSecsSinceEpoch())
                            .arg(manualRequestSequence_, 4, 10, QLatin1Char('0'));
+    activeRequestSource_ = QStringLiteral("manual");
     activeRequestFrameId_ = requestSnapshot_.frameId;
     activeRequestTimestampNs_ = requestSnapshot_.timestampNs;
     setPreviewUiState(PreviewUiState::Recognizing);
-    if (!manualClient_->recognize(requestSnapshot_.image, activeRequestId_,
-                                  activeRequestFrameId_, activeRequestTimestampNs_)) {
+    if (!manualClient_->recognize(activeRequestSource_, requestSnapshot_.image,
+                                  activeRequestId_, activeRequestFrameId_,
+                                  activeRequestTimestampNs_)) {
         updateError(QStringLiteral("冻结画面编码失败或识别服务不可用"));
         setPreviewUiState(PreviewUiState::Error);
     }
 }
 
-void MainWindow::onManualRequestStarted(const QString &requestId, quint64 frameId,
-                                        int jpegBytes)
+void MainWindow::onAutoRecognitionTimeout()
+{
+    if (!sentinelActive_ || previewUiState_ != PreviewUiState::Live ||
+        previewStreamState_ != 2 || !manualClient_ || manualClient_->isBusy()) {
+        return;
+    }
+
+    const QImage image = videoWidget_->displayedLiveImageCopy();
+    const quint64 frameId = videoWidget_->displayedLiveFrameId();
+    const quint64 timestampNs = videoWidget_->displayedLiveTimestampNs();
+    if (image.isNull() || frameId == 0)
+        return;
+
+    ++autoRequestSequence_;
+    activeRequestSource_ = QStringLiteral("auto");
+    activeRequestId_ = QStringLiteral("auto-%1-%2")
+                           .arg(QDateTime::currentDateTimeUtc().toMSecsSinceEpoch())
+                           .arg(autoRequestSequence_, 4, 10, QLatin1Char('0'));
+    activeRequestFrameId_ = frameId;
+    activeRequestTimestampNs_ = timestampNs;
+    if (!manualClient_->recognize(activeRequestSource_, image, activeRequestId_,
+                                  activeRequestFrameId_, activeRequestTimestampNs_)) {
+        updateError(QStringLiteral("自动识别帧编码失败或识别服务不可用"));
+    }
+}
+
+void MainWindow::updateAutoRecognitionTimer()
+{
+    const bool shouldRun = sentinelActive_ &&
+                           previewUiState_ == PreviewUiState::Live &&
+                           previewStreamState_ == 2;
+    if (shouldRun) {
+        if (!autoRecognitionTimer_->isActive())
+            autoRecognitionTimer_->start(autoRecognitionIntervalMs_);
+    } else {
+        autoRecognitionTimer_->stop();
+    }
+}
+
+void MainWindow::onRecognitionRequestStarted(const QString &source,
+                                             const QString &requestId,
+                                             quint64 frameId, int jpegBytes)
 {
     Q_UNUSED(jpegBytes)
-    if (requestId != activeRequestId_ || frameId != activeRequestFrameId_)
+    if (source != activeRequestSource_ || requestId != activeRequestId_ ||
+        frameId != activeRequestFrameId_) {
         return;
+    }
+    if (source == QStringLiteral("auto")) {
+        errorValue_->setText(QStringLiteral("自动识别中：帧 %1").arg(frameId));
+        return;
+    }
     videoWaiting_->setText(QStringLiteral("暂停帧 %1   正在识别").arg(frameId));
 }
 
-void MainWindow::onManualRequestSucceeded(const QString &requestId, quint64 frameId,
-                                          const QJsonObject &document,
-                                          qint64 elapsedMs)
+void MainWindow::onRecognitionRequestSucceeded(const QString &source,
+                                               const QString &requestId,
+                                               quint64 frameId,
+                                               const QJsonObject &document,
+                                               qint64 elapsedMs)
 {
-    if (requestId != activeRequestId_ || frameId != activeRequestFrameId_ ||
+    if (source != activeRequestSource_ || requestId != activeRequestId_ ||
+        frameId != activeRequestFrameId_ ||
         document.value(QStringLiteral("request_id")).toString() != requestId ||
         static_cast<quint64>(document.value(QStringLiteral("frame_id")).toDouble()) != frameId) {
         return;
@@ -522,25 +588,54 @@ void MainWindow::onManualRequestSucceeded(const QString &requestId, quint64 fram
     QString error;
     if (!AiResultClient::parseMessage(QJsonDocument(document).toJson(QJsonDocument::Compact),
                                       result, error) || !result.success) {
-        onManualRequestFailed(requestId, frameId, QStringLiteral("识别结果格式错误"), 0,
-                              elapsedMs);
+        onRecognitionRequestFailed(source, requestId, frameId,
+                                   QStringLiteral("识别结果格式错误"), 0,
+                                   elapsedMs);
+        return;
+    }
+    if (source == QStringLiteral("auto")) {
+        if (previewUiState_ == PreviewUiState::Live) {
+            updateAiResult(result);
+            errorValue_->setText(QStringLiteral("自动识别完成：%1 ms").arg(elapsedMs));
+        } else {
+            setPreviewUiState(previewUiState_);
+        }
+        activeRequestSource_.clear();
         return;
     }
     applyManualResult(result, elapsedMs);
+    activeRequestSource_.clear();
 }
 
-void MainWindow::onManualRequestFailed(const QString &requestId, quint64 frameId,
-                                       const QString &message, int httpStatus,
-                                       qint64 elapsedMs)
+void MainWindow::onRecognitionRequestFailed(const QString &source,
+                                            const QString &requestId,
+                                            quint64 frameId,
+                                            const QString &message,
+                                            int httpStatus, qint64 elapsedMs)
 {
-    if (requestId != activeRequestId_ || frameId != activeRequestFrameId_)
+    if (source != activeRequestSource_ || requestId != activeRequestId_ ||
+        frameId != activeRequestFrameId_) {
         return;
+    }
+    if (source == QStringLiteral("auto")) {
+        if (previewUiState_ == PreviewUiState::Live) {
+            updateError(httpStatus > 0
+                            ? QStringLiteral("自动识别失败（HTTP %1）：%2")
+                                  .arg(httpStatus).arg(message)
+                            : QStringLiteral("自动识别失败：%1").arg(message));
+        } else {
+            setPreviewUiState(previewUiState_);
+        }
+        activeRequestSource_.clear();
+        return;
+    }
     updateError(httpStatus > 0 ? QStringLiteral("识别失败（HTTP %1）：%2")
                                    .arg(httpStatus).arg(message)
                                : QStringLiteral("识别失败：%1").arg(message));
     videoWaiting_->setText(QStringLiteral("暂停帧 %1   请求耗时 %2 ms")
                                .arg(frameId).arg(elapsedMs));
     setPreviewUiState(PreviewUiState::Error);
+    activeRequestSource_.clear();
 }
 
 void MainWindow::setPreviewUiState(PreviewUiState state)
@@ -553,15 +648,19 @@ void MainWindow::setPreviewUiState(PreviewUiState state)
     }
     pauseButton_->setText(frozen ? QStringLiteral("继续") : QStringLiteral("暂停"));
     pauseButton_->setEnabled(state != PreviewUiState::Recognizing);
-    recognizeButton_->setEnabled(state == PreviewUiState::Frozen ||
-                                 state == PreviewUiState::ResultReady ||
-                                 state == PreviewUiState::Error);
+    const bool recognitionBusy = manualClient_ && manualClient_->isBusy();
+    recognizeButton_->setEnabled(!recognitionBusy &&
+                                 (state == PreviewUiState::Frozen ||
+                                  state == PreviewUiState::ResultReady ||
+                                  state == PreviewUiState::Error));
     if (state == PreviewUiState::Recognizing)
         recognizeButton_->setText(QStringLiteral("识别中…"));
     else if (state == PreviewUiState::ResultReady)
         recognizeButton_->setText(QStringLiteral("重新识别"));
     else if (state == PreviewUiState::Error)
         recognizeButton_->setText(QStringLiteral("重试识别"));
+    else if (recognitionBusy && activeRequestSource_ == QStringLiteral("auto"))
+        recognizeButton_->setText(QStringLiteral("自动识别中…"));
     else
         recognizeButton_->setText(QStringLiteral("识别"));
     updateVideoStatus();
@@ -571,6 +670,7 @@ void MainWindow::setPreviewUiState(PreviewUiState state)
                                    .arg(videoWidget_->frozenFrameId())
                                    .arg(sourceFrameId_));
     }
+    updateAutoRecognitionTimer();
 }
 
 void MainWindow::updateVideoStatus()

@@ -21,6 +21,9 @@ public:
     QImage frozenImageCopy() const;
     qulonglong frozenFrameId() const;
     qulonglong frozenTimestampNs() const;
+    QImage displayedLiveImageCopy() const;
+    qulonglong displayedLiveFrameId() const;
+    qulonglong displayedLiveTimestampNs() const;
 
 protected:
     void paintEvent(QPaintEvent *event) override;

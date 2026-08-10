@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HTTP endpoint for exactly one RV1106 frozen-frame recognition request."""
+"""HTTP endpoint for RV1106 automatic live-frame and manual frozen-frame requests."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import shutil
+import sys
 import threading
 import time
 from datetime import datetime, timezone
@@ -77,6 +78,7 @@ class Handler(BaseHTTPRequestHandler):
             "status": "ok",
             "busy": self.server.recognize_lock.locked(),
             "model": self.server.client.model,
+            "backend": self.server.backend,
         })
 
     def do_POST(self) -> None:
@@ -100,6 +102,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if size > self.server.max_image_bytes:
             self.send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"success": False, "error": "image too large"})
+            return
+        request_source = self.headers.get("X-Recognition-Source", "manual").strip().lower()
+        if request_source not in {"manual", "auto"}:
+            self.send_json(HTTPStatus.BAD_REQUEST, {
+                "success": False, "error": "invalid recognition source",
+            })
             return
         request_id = self.headers.get("X-Request-Id", "").strip()
         frame_id_text = self.headers.get("X-Frame-Id", "")
@@ -128,26 +136,29 @@ class Handler(BaseHTTPRequestHandler):
                     npu_document = json.load(source)
             except (OSError, json.JSONDecodeError):
                 self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {
-                    "type": "manual_result", "source": "local", "request_id": request_id,
+                    "type": request_source + "_result", "source": request_source,
+                    "request_id": request_id,
                     "frame_id": frame_id, "success": False,
                     "error": "local NPU result unavailable",
                 })
                 self.server.recognize_lock.release()
                 return
             document: dict[str, Any] = {
-                "type": "manual_result",
-                "source": "local",
+                **npu_document,
+                "type": request_source + "_result",
+                "source": request_source,
+                "recognition_backend": "local",
                 "request_id": request_id,
                 "frame_id": frame_id,
                 "frame_timestamp_ns": timestamp_ns,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "server_latency_ms": int((time.monotonic() - started) * 1000),
-                **npu_document,
             }
             try:
                 write_json_atomically(self.server.result_path, document)
-                cache(self.server.runtime_root, "manual", request_id, image, document, {
-                    "source": "local", "request_id": request_id, "frame_id": frame_id,
+                cache(self.server.runtime_root, request_source, request_id, image, document, {
+                    "source": request_source, "recognition_backend": "local",
+                    "request_id": request_id, "frame_id": frame_id,
                     "frame_timestamp_ns": timestamp_ns, "created_at": document["timestamp"],
                     "model": document.get("model"), "image_bytes": size,
                     "image_width": None, "image_height": None,
@@ -155,13 +166,14 @@ class Handler(BaseHTTPRequestHandler):
                 })
             except OSError:
                 self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {
-                    "type": "manual_result", "source": "local", "request_id": request_id,
+                    "type": request_source + "_result", "source": request_source,
+                    "request_id": request_id,
                     "frame_id": frame_id, "success": False, "error": "result write failed",
                 })
                 self.server.recognize_lock.release()
                 return
-            print("local request_id={} frame_id={} jpeg_bytes={} people={} latency_ms={}".format(
-                request_id, frame_id, size, document.get("peopleCount", 0),
+            print("{} local request_id={} frame_id={} jpeg_bytes={} people={} latency_ms={}".format(
+                request_source, request_id, frame_id, size, document.get("peopleCount", 0),
                 document["server_latency_ms"]), flush=True)
             self.send_json(HTTPStatus.OK, document)
             self.server.recognize_lock.release()
@@ -169,8 +181,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             result = self.server.client.analyze_image_bytes(image, "image/jpeg")
             document: dict[str, Any] = {
-                "type": "manual_result",
-                "source": "manual",
+                "type": request_source + "_result",
+                "source": request_source,
                 "request_id": request_id,
                 "frame_id": frame_id,
                 "frame_timestamp_ns": timestamp_ns,
@@ -180,8 +192,8 @@ class Handler(BaseHTTPRequestHandler):
             }
             try:
                 write_json_atomically(self.server.result_path, document)
-                cache(self.server.runtime_root, "manual", request_id, image, document, {
-                    "source": "manual", "request_id": request_id, "frame_id": frame_id,
+                cache(self.server.runtime_root, request_source, request_id, image, document, {
+                    "source": request_source, "request_id": request_id, "frame_id": frame_id,
                     "frame_timestamp_ns": timestamp_ns, "created_at": document["timestamp"],
                     "model": document.get("model"), "image_bytes": size,
                     "image_width": None, "image_height": None,
@@ -189,20 +201,23 @@ class Handler(BaseHTTPRequestHandler):
                 })
             except OSError:
                 self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {
-                    "type": "manual_result", "source": "manual", "request_id": request_id,
+                    "type": request_source + "_result", "source": request_source,
+                    "request_id": request_id,
                     "frame_id": frame_id, "success": False, "error": "result write failed",
                 })
                 return
             status = HTTPStatus.OK if result["success"] else HTTPStatus.BAD_GATEWAY
-            print("manual request_id={} frame_id={} jpeg_bytes={} success={} latency_ms={}".format(
-                request_id, frame_id, size, result["success"], document["server_latency_ms"]), flush=True)
+            print("{} request_id={} frame_id={} jpeg_bytes={} success={} latency_ms={}".format(
+                request_source, request_id, frame_id, size, result["success"],
+                document["server_latency_ms"]), flush=True)
             self.send_json(status, document)
         except Exception as exc:
             import traceback
             print("recognize exception: {!r}".format(exc), file=sys.stderr, flush=True)
             traceback.print_exc()
             self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {
-                "type": "manual_result", "source": "manual", "request_id": request_id,
+                "type": request_source + "_result", "source": request_source,
+                "request_id": request_id,
                 "frame_id": frame_id, "success": False, "error": "internal server error",
             })
         finally:
@@ -243,7 +258,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Serve manual RV1106 frozen-frame recognition.")
+    parser = argparse.ArgumentParser(description="Serve RV1106 interactive recognition requests.")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=9001)
     parser.add_argument("--max-image-bytes", type=int, default=1048576)
@@ -269,7 +284,7 @@ def main() -> int:
                                      args.max_image_bytes, args.min_free_mb)
     server.backend = args.backend
     server.npu_result_path = args.npu_result
-    print("Manual recognition listening on {}:{} (backend={}, min-free {} MiB)".format(
+    print("Interactive recognition listening on {}:{} (backend={}, min-free {} MiB)".format(
         args.host, args.port, args.backend, args.min_free_mb), flush=True)
     try:
         server.serve_forever(poll_interval=0.5)

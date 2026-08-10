@@ -18,15 +18,19 @@ public:
 
     void setRecognizeUrl(const QUrl &url);
     bool isBusy() const;
-    bool recognize(const QImage &image, const QString &requestId,
-                   quint64 frameId, quint64 timestampNs);
+    bool recognize(const QString &source, const QImage &image,
+                   const QString &requestId, quint64 frameId,
+                   quint64 timestampNs);
     void abort();
 
 signals:
-    void requestStarted(const QString &requestId, quint64 frameId, int jpegBytes);
-    void requestSucceeded(const QString &requestId, quint64 frameId,
+    void requestStarted(const QString &source, const QString &requestId,
+                        quint64 frameId, int jpegBytes);
+    void requestSucceeded(const QString &source, const QString &requestId,
+                          quint64 frameId,
                           const QJsonObject &result, qint64 totalElapsedMs);
-    void requestFailed(const QString &requestId, quint64 frameId,
+    void requestFailed(const QString &source, const QString &requestId,
+                       quint64 frameId,
                        const QString &errorMessage, int httpStatus,
                        qint64 totalElapsedMs);
 
@@ -38,6 +42,7 @@ private:
     QNetworkReply *reply_;
     QTimer *timeoutTimer_;
     QUrl url_;
+    QString source_;
     QString requestId_;
     quint64 frameId_;
     quint64 timestampNs_;

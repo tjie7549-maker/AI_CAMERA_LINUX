@@ -35,6 +35,9 @@
 #define PERSON_CLASS 0
 #define OBJ_CLASS_NUM 80
 #define PROP_BOX_SIZE 85
+#define DEFAULT_IDLE_SECONDS 30
+#define DEFAULT_WAKE_HITS 3
+#define DEFAULT_BACKLIGHT_PATH "/sys/class/backlight/backlight/bl_power"
 
 typedef struct {
     float x, y, w, h, score;
@@ -55,6 +58,81 @@ static double now_epoch_ms(void)
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     return ts.tv_sec * 1000.0 + ts.tv_nsec / 1000000.0;
+}
+
+typedef struct {
+    const char *backlight_path;
+    double idle_timeout_ms;
+    double idle_reference_ms;
+    double last_person_ms;
+    int wake_hits;
+    int consecutive_hits;
+    int active;
+    int display_awake;
+    int control_backlight;
+} SentinelState;
+
+static int write_backlight_power(const char *path, int awake)
+{
+    const char *value = awake ? "0\n" : "4\n";
+    int fd = open(path, O_WRONLY);
+    if (fd < 0) {
+        fprintf(stderr, "[sentinel] open %s failed: %s\n", path, strerror(errno));
+        return -1;
+    }
+    ssize_t written = write(fd, value, 2);
+    int saved_errno = errno;
+    close(fd);
+    if (written != 2) {
+        fprintf(stderr, "[sentinel] write %s failed: %s\n",
+                path, strerror(saved_errno));
+        return -1;
+    }
+    return 0;
+}
+
+static void sentinel_set_display(SentinelState *state, int awake)
+{
+    if (state->display_awake == awake)
+        return;
+    if (state->control_backlight)
+        (void)write_backlight_power(state->backlight_path, awake);
+    state->display_awake = awake;
+    fprintf(stderr, "[sentinel] display=%s\n", awake ? "awake" : "sleep");
+}
+
+static void sentinel_update(SentinelState *state, int persons, double now)
+{
+    if (persons > 0) {
+        if (state->active) {
+            state->last_person_ms = now;
+        } else {
+            if (state->consecutive_hits < state->wake_hits)
+                state->consecutive_hits++;
+            if (state->consecutive_hits >= state->wake_hits) {
+                state->active = 1;
+                state->last_person_ms = now;
+                sentinel_set_display(state, 1);
+                fprintf(stderr, "[sentinel] state=active persons=%d hits=%d\n",
+                        persons, state->consecutive_hits);
+            }
+        }
+    } else {
+        state->consecutive_hits = 0;
+    }
+
+    if (state->active && now - state->last_person_ms >= state->idle_timeout_ms) {
+        state->active = 0;
+        state->idle_reference_ms = now;
+        sentinel_set_display(state, 0);
+        fprintf(stderr, "[sentinel] state=idle no-person=%.1fs\n",
+                state->idle_timeout_ms / 1000.0);
+    } else if (!state->active && state->display_awake && persons == 0 &&
+               now - state->idle_reference_ms >= state->idle_timeout_ms) {
+        sentinel_set_display(state, 0);
+        fprintf(stderr, "[sentinel] state=idle startup-no-person=%.1fs\n",
+                state->idle_timeout_ms / 1000.0);
+    }
 }
 
 static inline float deqnt(int8_t q, int zp, float scale)
@@ -139,7 +217,8 @@ static void decode_head(const HeadInfo *head, Box *boxes, int *count)
                 bh = bh * bh * head->anchor_h[a];
                 float x1 = bx - bw / 2.0f, y1 = by - bh / 2.0f;
                 float x2 = bx + bw / 2.0f, y2 = by + bh / 2.0f;
-                if (x1 < 0) x1 = 0; if (y1 < 0) y1 = 0;
+                if (x1 < 0) x1 = 0;
+                if (y1 < 0) y1 = 0;
                 if (x2 > MODEL_SIZE) x2 = MODEL_SIZE;
                 if (y2 > MODEL_SIZE) y2 = MODEL_SIZE;
                 if (x2 <= x1 || y2 <= y1) continue;
@@ -286,6 +365,10 @@ int main(int argc, char **argv)
     const char *server_ip = "192.168.50.1";
     int server_port = 9010;
     int interval_ms = 300;
+    int idle_seconds = DEFAULT_IDLE_SECONDS;
+    int wake_hits = DEFAULT_WAKE_HITS;
+    int control_backlight = 1;
+    const char *backlight_path = DEFAULT_BACKLIGHT_PATH;
     const char *test_image = NULL;
 
     for (int i = 1; i < argc; i++) {
@@ -294,11 +377,28 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--server-ip") && i + 1 < argc) server_ip = argv[++i];
         else if (!strcmp(argv[i], "--port") && i + 1 < argc) server_port = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--interval-ms") && i + 1 < argc) interval_ms = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--idle-seconds") && i + 1 < argc) idle_seconds = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--wake-hits") && i + 1 < argc) wake_hits = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--backlight-path") && i + 1 < argc) backlight_path = argv[++i];
+        else if (!strcmp(argv[i], "--no-backlight-control")) control_backlight = 0;
         else if (!strcmp(argv[i], "--image") && i + 1 < argc) test_image = argv[++i];
         else {
-            fprintf(stderr, "usage: %s [--model M] [--shm NAME] [--server-ip IP] [--port P] [--interval-ms N] [--image FILE]\n", argv[0]);
+            fprintf(stderr,
+                    "usage: %s [--model M] [--shm NAME] [--server-ip IP] "
+                    "[--port P] [--interval-ms N] [--idle-seconds N] "
+                    "[--wake-hits N] [--backlight-path PATH] "
+                    "[--no-backlight-control] [--image FILE]\n",
+                    argv[0]);
             return 2;
         }
+    }
+    if (interval_ms <= 0 || idle_seconds <= 0 || wake_hits <= 0) {
+        fprintf(stderr, "interval-ms, idle-seconds and wake-hits must be positive\n");
+        return 2;
+    }
+    if (test_image) {
+        control_backlight = 0;
+        wake_hits = 1;
     }
 
     signal(SIGINT, on_signal);
@@ -416,6 +516,21 @@ int main(int argc, char **argv)
     int loop = 0;
     long long total_infer_ms = 0;
     long long total_frames = 0;
+    double sentinel_started_ms = now_ms();
+    SentinelState sentinel = {
+        .backlight_path = backlight_path,
+        .idle_timeout_ms = idle_seconds * 1000.0,
+        .idle_reference_ms = sentinel_started_ms,
+        .last_person_ms = sentinel_started_ms,
+        .wake_hits = wake_hits,
+        .consecutive_hits = 0,
+        .active = 0,
+        .display_awake = 1,
+        .control_backlight = control_backlight,
+    };
+    fprintf(stderr,
+            "[sentinel] enabled idle=%ds wake_hits=%d backlight_control=%s\n",
+            idle_seconds, wake_hits, control_backlight ? "on" : "off");
     while (!g_stop) {
         double frame_start = now_ms();
         if (!test_image) {
@@ -443,18 +558,26 @@ int main(int argc, char **argv)
         int count = 0;
         for (int i = 0; i < 3; i++) decode_head(&heads[i], boxes, &count);
         count = nms(boxes, count);
+        int persons = count;
+        sentinel_update(&sentinel, persons, now_ms());
 
         float scale = fminf((float)MODEL_SIZE / preview_w, (float)MODEL_SIZE / preview_h);
-        int persons = count;
-        char json[512];
+        char json[640];
         int pos = snprintf(json, sizeof(json),
                            "{\"type\":\"npu\",\"source\":\"local\",\"timestamp\":%.0f,"
                            "\"model\":\"yolov5n-320\",\"success\":true,\"latencyMs\":%.1f,"
-                           "\"peopleCount\":%d,\"objects\":%s,\"warning\":%s,"
+                           "\"peopleCount\":%d,\"sentinelActive\":%s,\"displayAwake\":%s,"
+                           "\"objects\":%s,\"warning\":false,"
                            "\"summary\":\"本地NPU检测：人×%d\",\"scene\":\"端侧NPU\"}\n",
                            now_epoch_ms(), t1 - t0, persons,
+                           sentinel.active ? "true" : "false",
+                           sentinel.display_awake ? "true" : "false",
                            persons ? "[\"person\"]" : "[]",
-                           persons ? "true" : "false", persons);
+                           persons);
+        if (pos < 0)
+            break;
+        if (pos >= (int)sizeof(json))
+            pos = (int)sizeof(json) - 1;
         (void)scale;
 
         if (sock < 0) sock = connect_rock(server_ip, server_port);
@@ -479,6 +602,10 @@ int main(int argc, char **argv)
         }
     }
 
+    if (!test_image && sentinel.control_backlight) {
+        (void)write_backlight_power(sentinel.backlight_path, 1);
+        fprintf(stderr, "[sentinel] exit: display restored\n");
+    }
     if (sock >= 0) close(sock);
     if (stbi_pix) free(stbi_pix);
     for (int bi = 0; bi < 2; bi++) {

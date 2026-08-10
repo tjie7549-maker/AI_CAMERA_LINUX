@@ -39,7 +39,8 @@ rock2a_receiver/
 ├── runtime/result_cache/   按 auto/manual 缓存的精确识别输入与结果
 ├── runtime/saved_results/  用户确认保存的图片、JSON、元数据与索引
 ├── run_ai_monitor.sh       一键接收与识别脚本
-├── run_ai_pipeline.sh      自动编译后持续启动识别的入口脚本
+├── run_ai_pipeline.sh      无 Qt 的 headless 自动识别测试入口
+├── run_manual_ai_pipeline.sh  Qt 自动/手动交互识别入口
 ├── run_linked_ai_camera.sh 双板联动入口
 └── .venv-qwen/             独立 Python 虚拟环境
 ```
@@ -95,6 +96,10 @@ cd /home/radxa/AI_CAMERA_LINUX/rock2a_receiver
 ./run_linked_ai_camera.sh
 ```
 
+默认的 `manual` 是 ROCK 2A 进程编排模式：启动 HTTP 9001，由 Qt 统一调度实时画面的
+30 秒自动识别和暂停帧手动识别。它不是“只能手动识别”。不要再同时启动 headless
+watcher，否则会产生两套自动云端请求。
+
 该脚本不存储 RV1106 登录密码。首次部署后，ROCK 2A 的 `~/.ssh/config` 中需要存在
 `rv1106-ai-camera` 主机别名。
 
@@ -104,18 +109,30 @@ cd /home/radxa/AI_CAMERA_LINUX/rock2a_receiver
 
 ```sh
 cd /home/radxa/AI_CAMERA_LINUX/rock2a_receiver
+./run_manual_ai_pipeline.sh
+```
+
+该脚本持续运行到 Ctrl+C，并完成：
+
+1. 接收 `rtsp://192.168.50.2:554/live/1`。
+2. 监听 `0.0.0.0:9001`，接收 Qt 发来的实时帧或暂停帧。
+3. 实时预览且 NPU 值守 active 时，由 Qt 每 30 秒提交一次 `source=auto` 请求。
+4. 点击暂停后停止自动周期，只接收冻结帧 `source=manual` 请求。
+5. 监听 `0.0.0.0:9000`，将 NPU 状态与最新识别 JSON 回传 Qt。
+6. Ctrl+C 时正常停止接收器、HTTP 服务、NPU 状态服务和 TCP 服务。
+
+值守状态文件为 `runtime/ai_cam/npu_latest.json`；Qt 使用低频
+`runtime/ai_cam/npu_display.json`。NPU 原始帧不上传云端；人员离开并达到 RV1106
+无人超时后，Qt 收到 idle 状态并停止新的自动请求。
+云端或手动结果发送后具有 10 秒显示优先期，期间 NPU 展示更新不会覆盖结果。
+
+无 Qt 的 headless 自动识别专项测试才使用：
+
+```sh
 ./run_ai_pipeline.sh
 ```
 
-该脚本会在需要时配置 CMake，并始终重新编译接收端；随后持续运行，按 Ctrl+C 正常停止。它会：
-
-1. 接收 `rtsp://192.168.50.2:554/live/1`。
-2. 每 5 秒保存一张普通 JPEG 到 `artifacts/frames/ai_monitor/`。
-3. 每 3 秒原子更新一次最新图片。
-4. 每 5 秒最多调用一次千问 API。
-5. 在当前终端显示最新的中文 JSON 识别结果。
-6. 监听 `0.0.0.0:9000`，将最新 JSON 自动发送给 RV1106 Qt。
-7. Ctrl+C 时由监督脚本向 C++ 接收、千问监控和 TCP 结果服务分别发送一次 `SIGTERM`。
+该入口由 `watch_latest_image.py` 读取 `latest.jpg`，不应与智能终端交互入口同时运行。
 
 持续运行到 Ctrl+C：
 
@@ -123,7 +140,7 @@ cd /home/radxa/AI_CAMERA_LINUX/rock2a_receiver
 ./run_ai_monitor.sh --duration 0
 ```
 
-`run_ai_monitor.sh` 保留为底层启动脚本，适合需要自定义测试时长的场景；`run_ai_pipeline.sh` 是日常一键入口。
+`run_ai_monitor.sh` 保留为底层 headless 测试脚本，适合需要自定义测试时长的场景。
 
 覆盖 RTSP 地址：
 
@@ -159,12 +176,12 @@ python3 -m json.tool \
   /home/radxa/AI_CAMERA_LINUX/rock2a_receiver/runtime/ai_cam/latest_result.json
 ```
 
-## 手动识别与保存结果服务
+## 交互识别与保存结果服务
 
 `run_manual_ai_pipeline.sh` 除 TCP 结果服务外，还监听 `0.0.0.0:9001`：
 
 ```text
-POST /recognize    接收 RV1106 暂停帧 JPEG 并返回识别 JSON
+POST /recognize    接收 RV1106 实时帧或暂停帧 JPEG 并返回识别 JSON
 POST /save-result  根据 source 与 request_id 保存已有识别结果
 GET  /health       服务健康检查
 ```
@@ -185,6 +202,11 @@ runtime/saved_results/<auto|manual>/<YYYY-MM-DD>/<HHMMSS_request_id>/
 
 其中包含精确上传图片、完整识别 JSON 和元数据；`index.jsonl` 使用文件锁维护幂等索引，
 同一来源和请求 ID 不会重复保存。缓存最多保留 100 条，并清理 24 小时前的记录。
+
+Qt 通过 `X-Recognition-Source: auto|manual` 区分来源。实时且 NPU 值守 active 时
+每 30 秒发送一次 `auto` 请求；点击暂停后停止周期，只允许冻结帧 `manual` 请求。
+日常智能终端应运行 `run_manual_ai_pipeline.sh`（或 systemd 的 `manual` 模式），
+避免再同时启动旧的 headless watcher 而产生重复云端请求。
 
 ## 手动运行
 

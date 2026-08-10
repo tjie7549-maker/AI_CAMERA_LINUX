@@ -12,9 +12,14 @@ FRAME_DIR="$PROJECT_DIR/artifacts/frames/ai_monitor"
 RUNTIME_DIR="$PROJECT_DIR/runtime/ai_cam"
 LATEST_IMAGE="$RUNTIME_DIR/latest.jpg"
 LATEST_RESULT="$RUNTIME_DIR/latest_result.json"
+NPU_RESULT_PATH="${NPU_RESULT_PATH:-$RUNTIME_DIR/npu_latest.json}"
+NPU_DISPLAY_PATH="${NPU_DISPLAY_PATH:-$RUNTIME_DIR/npu_display.json}"
+NPU_SERVER_PORT="${NPU_SERVER_PORT:-9010}"
+NPU_PRESENCE_STALE_SECONDS="${NPU_PRESENCE_STALE_SECONDS:-3}"
 RECEIVER_LOG="$RUNTIME_DIR/receiver.log"
 WATCHER_LOG="$RUNTIME_DIR/qwen_watch.log"
 TCP_LOG="$RUNTIME_DIR/result_tcp.log"
+NPU_LOG="$RUNTIME_DIR/npu_result_server.log"
 
 usage() {
     cat <<EOF
@@ -85,7 +90,7 @@ mkdir -p "$FRAME_DIR" "$RUNTIME_DIR"
 
 # These two files are runtime outputs for this invocation. Clearing them keeps
 # an earlier run from being displayed or sent to the API as a fresh frame.
-rm -f "$LATEST_IMAGE" "$LATEST_RESULT"
+rm -f "$LATEST_IMAGE" "$LATEST_RESULT" "$NPU_RESULT_PATH" "$NPU_DISPLAY_PATH"
 
 # qwen.env remains outside the repository and is never printed by this script.
 set -a
@@ -95,6 +100,7 @@ set +a
 receiver_pid=""
 watcher_pid=""
 tcp_pid=""
+npu_pid=""
 stopping=0
 
 stop_child() {
@@ -108,6 +114,7 @@ stop_children() {
     stop_child "$receiver_pid"
     stop_child "$watcher_pid"
     stop_child "$tcp_pid"
+    stop_child "$npu_pid"
     if [ -n "$watcher_pid" ]; then
         wait "$watcher_pid" 2>/dev/null || true
     fi
@@ -116,6 +123,9 @@ stop_children() {
     fi
     if [ -n "$receiver_pid" ]; then
         wait "$receiver_pid" 2>/dev/null || true
+    fi
+    if [ -n "$npu_pid" ]; then
+        wait "$npu_pid" 2>/dev/null || true
     fi
 }
 
@@ -173,11 +183,21 @@ receiver_pid=$!
 setsid "$PYTHON" "$PROJECT_DIR/tools/qwen_vision/watch_latest_image.py" \
     --image "$LATEST_IMAGE" \
     --result "$LATEST_RESULT" \
-    --interval-ms 5000 >"$WATCHER_LOG" 2>&1 &
+    --interval-ms 5000 \
+    --presence-result "$NPU_RESULT_PATH" \
+    --presence-stale-seconds "$NPU_PRESENCE_STALE_SECONDS" \
+    >"$WATCHER_LOG" 2>&1 &
 watcher_pid=$!
+
+setsid "$PYTHON" "$PROJECT_DIR/tools/qwen_vision/npu_result_server.py" \
+    --host 0.0.0.0 --port "$NPU_SERVER_PORT" \
+    --result-path "$NPU_RESULT_PATH" --display-path "$NPU_DISPLAY_PATH" \
+    >"$NPU_LOG" 2>&1 &
+npu_pid=$!
 
 setsid "$PYTHON" "$PROJECT_DIR/tools/qwen_vision/send_result_tcp.py" \
     --input "$LATEST_RESULT" \
+    --extra-input "$NPU_DISPLAY_PATH" \
     --host "${RESULT_HOST:-0.0.0.0}" \
     --port "${RESULT_PORT:-9000}" >"$TCP_LOG" 2>&1 &
 tcp_pid=$!
@@ -188,14 +208,20 @@ if ! tcp_is_running; then
     stop_children
     exit 1
 fi
+if ! kill -0 "$npu_pid" 2>/dev/null; then
+    echo "NPU result server failed to start. See: $NPU_LOG" >&2
+    stop_children
+    exit 1
+fi
 
 echo "Monitoring started. Press Ctrl+C to stop."
 echo "Result: $LATEST_RESULT"
 echo "Logs: $RECEIVER_LOG, $WATCHER_LOG, $TCP_LOG"
+echo "NPU sentinel: $NPU_RESULT_PATH (log: $NPU_LOG)"
 echo "TCP result server: ${RESULT_HOST:-0.0.0.0}:${RESULT_PORT:-9000}"
 
 last_fingerprint=""
-while receiver_is_running && tcp_is_running; do
+while receiver_is_running && tcp_is_running && kill -0 "$npu_pid" 2>/dev/null; do
     if [ -f "$LATEST_RESULT" ]; then
         fingerprint=$(stat -c '%Y:%s' "$LATEST_RESULT" 2>/dev/null || true)
         if [ -n "$fingerprint" ] && [ "$fingerprint" != "$last_fingerprint" ]; then

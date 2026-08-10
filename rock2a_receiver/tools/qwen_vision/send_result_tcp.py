@@ -31,11 +31,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=9000)
     parser.add_argument("--poll-interval", type=float, default=0.25)
+    parser.add_argument(
+        "--primary-hold-seconds",
+        type=float,
+        default=10.0,
+        help="hold the primary result on screen before sending extra inputs",
+    )
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
     if args.poll_interval <= 0:
         parser.error("--poll-interval must be positive")
+    if args.primary_hold_seconds < 0:
+        parser.error("--primary-hold-seconds must be non-negative")
     return args
 
 
@@ -91,15 +99,20 @@ def client_closed(client: socket.socket, timeout: float) -> bool:
 
 
 def serve_client(client: socket.socket, address: Tuple[str, int],
-                 input_paths: list, poll_interval: float) -> None:
+                 input_paths: list, poll_interval: float,
+                 primary_hold_seconds: float) -> None:
     print(f"Client connected: {address[0]}:{address[1]}", flush=True)
     last_fingerprints: dict = {}
+    primary_path = input_paths[0]
+    primary_hold_until = 0.0
     while True:
         if client_closed(client, poll_interval):
             print("Client disconnected", flush=True)
             return
 
         for input_path in input_paths:
+            if input_path != primary_path and time.monotonic() < primary_hold_until:
+                continue
             fingerprint = file_fingerprint(input_path)
             if fingerprint is None or fingerprint == last_fingerprints.get(input_path):
                 continue
@@ -113,10 +126,12 @@ def serve_client(client: socket.socket, address: Tuple[str, int],
                 print("Client disconnected during send", flush=True)
                 return
             print(f"Sent {len(message)} bytes from {input_path}", flush=True)
+            if input_path == primary_path:
+                primary_hold_until = time.monotonic() + primary_hold_seconds
 
 
 def run_server(host: str, port: int, input_paths: list,
-               poll_interval: float) -> None:
+               poll_interval: float, primary_hold_seconds: float) -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server.bind((host, port))
@@ -133,14 +148,26 @@ def run_server(host: str, port: int, input_paths: list,
                 continue
             with client:
                 client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-                serve_client(client, address, input_paths, poll_interval)
+                serve_client(
+                    client,
+                    address,
+                    input_paths,
+                    poll_interval,
+                    primary_hold_seconds,
+                )
 
 
 def main() -> int:
     args = parse_args()
     input_paths = [args.input] + list(args.extra_input)
     try:
-        run_server(args.host, args.port, input_paths, args.poll_interval)
+        run_server(
+            args.host,
+            args.port,
+            input_paths,
+            args.poll_interval,
+            args.primary_hold_seconds,
+        )
     except KeyboardInterrupt:
         print("\nStopped", flush=True)
         return 0

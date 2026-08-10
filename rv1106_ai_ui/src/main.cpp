@@ -111,11 +111,16 @@ int main(int argc, char *argv[])
         QStringList() << QStringLiteral("recognize-url"),
         QStringLiteral("ROCK 2A manual-recognition HTTP URL"),
         QStringLiteral("url"), QStringLiteral("http://192.168.50.1:9001/recognize"));
+    QCommandLineOption autoRecognitionIntervalOption(
+        QStringList() << QStringLiteral("auto-recognition-interval-ms"),
+        QStringLiteral("Automatic cloud-recognition interval while live"),
+        QStringLiteral("milliseconds"), QStringLiteral("30000"));
     parser.addOption(serverIpOption);
     parser.addOption(serverPortOption);
     parser.addOption(previewShmOption);
     parser.addOption(previewTimeoutOption);
     parser.addOption(recognizeUrlOption);
+    parser.addOption(autoRecognitionIntervalOption);
     parser.process(app);
 
     const QString serverIp = parser.value(serverIpOption);
@@ -153,6 +158,14 @@ int main(int argc, char *argv[])
                      parser.value(recognizeUrlOption).toLocal8Bit().constData());
         return 2;
     }
+    bool autoIntervalOk = false;
+    const int autoRecognitionIntervalMs =
+        parser.value(autoRecognitionIntervalOption).toInt(&autoIntervalOk);
+    if (!autoIntervalOk || autoRecognitionIntervalMs < 1000) {
+        std::fprintf(stderr, "Invalid --auto-recognition-interval-ms: %s\n",
+                     parser.value(autoRecognitionIntervalOption).toLocal8Bit().constData());
+        return 2;
+    }
 
     const QSize screenSize = app.primaryScreen()->size();
     if (screenSize != QSize(720, 720)) {
@@ -164,7 +177,8 @@ int main(int argc, char *argv[])
     manualRecognitionClient.setRecognizeUrl(recognizeUrl);
     ResultStorageClient storageClient;
     storageClient.setUrl(QUrl(QStringLiteral("http://192.168.50.1:9001/save-result")));
-    MainWindow window(&manualRecognitionClient, &storageClient);
+    MainWindow window(&manualRecognitionClient, &storageClient,
+                      autoRecognitionIntervalMs);
     StatusController statusController;
     AiResultClient client(serverIp, static_cast<quint16>(portValue));
     PreviewShmReader previewReader(previewShm, previewTimeoutMs);
@@ -188,11 +202,11 @@ int main(int argc, char *argv[])
     QObject::connect(&previewReader, &PreviewShmReader::statsChanged,
                      &window, &MainWindow::updatePreviewStats);
     QObject::connect(&manualRecognitionClient, &ManualRecognitionClient::requestStarted,
-                     &window, &MainWindow::onManualRequestStarted);
+                     &window, &MainWindow::onRecognitionRequestStarted);
     QObject::connect(&manualRecognitionClient, &ManualRecognitionClient::requestSucceeded,
-                     &window, &MainWindow::onManualRequestSucceeded);
+                     &window, &MainWindow::onRecognitionRequestSucceeded);
     QObject::connect(&manualRecognitionClient, &ManualRecognitionClient::requestFailed,
-                     &window, &MainWindow::onManualRequestFailed);
+                     &window, &MainWindow::onRecognitionRequestFailed);
     QObject::connect(&storageClient,&ResultStorageClient::succeeded,&window,&MainWindow::onSaveSucceeded);
     QObject::connect(&storageClient,&ResultStorageClient::failed,&window,&MainWindow::onSaveFailed);
     QObject::connect(&window,&MainWindow::userExitRequested,&app,[&app](){ app.exit(42); });

@@ -24,7 +24,9 @@ AUTO_SAVE_DEDUP_SECONDS=${AI_CAMERA_AUTO_SAVE_DEDUP_SECONDS:-60}
 MIN_FREE_MB=${AI_CAMERA_MIN_FREE_MB:-1024}
 AI_BACKEND=${AI_BACKEND:-cloud}
 NPU_RESULT_PATH=${NPU_RESULT_PATH:-$RUNTIME_DIR/npu_latest.json}
+NPU_DISPLAY_PATH=${NPU_DISPLAY_PATH:-$RUNTIME_DIR/npu_display.json}
 NPU_SERVER_PORT=${NPU_SERVER_PORT:-9010}
+NPU_PRESENCE_STALE_SECONDS=${NPU_PRESENCE_STALE_SECONDS:-3}
 
 declare -A PIDS
 declare -A FAILS
@@ -40,6 +42,7 @@ now_ts() {
 }
 
 mkdir -p "$LOG_DIR" "$RUNTIME_DIR"
+rm -f "$NPU_RESULT_PATH" "$NPU_DISPLAY_PATH"
 
 stop_child() {
     local name=$1
@@ -89,7 +92,9 @@ start_one() {
         npu_server)
             setsid "$PYTHON" "$PROJECT_DIR/tools/qwen_vision/npu_result_server.py" \
                 --host 0.0.0.0 --port "$NPU_SERVER_PORT" \
-                --result-path "$NPU_RESULT_PATH" >>"$LOG_DIR/npu_server.log" 2>&1 &
+                --result-path "$NPU_RESULT_PATH" \
+                --display-path "$NPU_DISPLAY_PATH" \
+                >>"$LOG_DIR/npu_server.log" 2>&1 &
             ;;
         watcher)
             set -a; . "$ENV_FILE"; set +a
@@ -97,6 +102,8 @@ start_one() {
                 --image "$RUNTIME_DIR/latest.jpg" \
                 --result "$RUNTIME_DIR/latest_result.json" \
                 --interval-ms 5000 \
+                --presence-result "$NPU_RESULT_PATH" \
+                --presence-stale-seconds "$NPU_PRESENCE_STALE_SECONDS" \
                 --auto-save-policy "$AUTO_SAVE_POLICY" \
                 --auto-save-dedup-seconds "$AUTO_SAVE_DEDUP_SECONDS" \
                 --min-free-mb "$MIN_FREE_MB" >>"$LOG_DIR/auto_watcher.log" 2>&1 &
@@ -104,7 +111,7 @@ start_one() {
         tcp_sender)
             setsid "$PYTHON" "$PROJECT_DIR/tools/qwen_vision/send_result_tcp.py" \
                 --input "$RUNTIME_DIR/latest_result.json" \
-                --extra-input "$NPU_RESULT_PATH" \
+                --extra-input "$NPU_DISPLAY_PATH" \
                 --host 0.0.0.0 \
                 --port 9000 >>"$LOG_DIR/tcp_sender.log" 2>&1 &
             ;;

@@ -195,6 +195,42 @@ stop_rkipc() {
 		echo "Failed to stop rkipc" >&2
 		return 1
 	fi
+
+	# rkipc may spawn an eth0 DHCP client after opening media resources.  Its
+	# inherited RTSP socket and DMA-BUF descriptors survive after rkipc exits,
+	# so stop only that legacy eth0 client before starting our media pipeline.
+	eth0_udhcpc_pids=""
+	for pid in $(pidof udhcpc 2>/dev/null); do
+		[ -r "/proc/$pid/cmdline" ] || continue
+		cmdline=$(tr '\000' ' ' <"/proc/$pid/cmdline" 2>/dev/null)
+		case " $cmdline " in
+			*" -i eth0 "*)
+				kill -TERM "$pid" 2>/dev/null
+				eth0_udhcpc_pids="$eth0_udhcpc_pids $pid"
+				;;
+		esac
+	done
+
+	for pid in $eth0_udhcpc_pids; do
+		count=0
+		while kill -0 "$pid" 2>/dev/null && [ "$count" -lt 5 ]; do
+			count=$((count + 1))
+			sleep 1
+		done
+		kill -KILL "$pid" 2>/dev/null
+	done
+
+	if command -v fuser >/dev/null 2>&1; then
+		count=0
+		while fuser 554/tcp >/dev/null 2>&1 && [ "$count" -lt 5 ]; do
+			count=$((count + 1))
+			sleep 1
+		done
+		if fuser 554/tcp >/dev/null 2>&1; then
+			echo "Failed to release RTSP port 554" >&2
+			return 1
+		fi
+	fi
 	sleep 2
 }
 

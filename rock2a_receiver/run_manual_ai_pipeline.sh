@@ -9,6 +9,7 @@ ENV_FILE="$HOME/.config/ai_cam/qwen.env"
 RUNTIME_DIR="$PROJECT_DIR/runtime/ai_cam"
 RESULT_PATH="$RUNTIME_DIR/latest_result.json"
 NPU_RESULT_PATH="${NPU_RESULT_PATH:-$RUNTIME_DIR/npu_latest.json}"
+NPU_DISPLAY_PATH="${NPU_DISPLAY_PATH:-$RUNTIME_DIR/npu_display.json}"
 FRAME_DIR="$PROJECT_DIR/artifacts/frames/manual_monitor"
 URL="${RTSP_URL:-rtsp://192.168.50.2:554/live/1}"
 SERVER_PORT="${MANUAL_RECOGNIZE_PORT:-9001}"
@@ -23,7 +24,7 @@ for required in "$RECEIVER" "$PYTHON" "$ENV_FILE"; do
 done
 
 mkdir -p "$RUNTIME_DIR" "$FRAME_DIR"
-rm -f "$RESULT_PATH"
+rm -f "$RESULT_PATH" "$NPU_RESULT_PATH" "$NPU_DISPLAY_PATH"
 
 set -a
 . "$ENV_FILE"
@@ -68,6 +69,7 @@ setsid "$RECEIVER" --url "$URL" --output "$FRAME_DIR" --interval-ms 5000 \
 receiver_pid=$!
 setsid "$PYTHON" "$PROJECT_DIR/tools/qwen_vision/npu_result_server.py" \
     --host 0.0.0.0 --port "$NPU_SERVER_PORT" --result-path "$NPU_RESULT_PATH" \
+    --display-path "$NPU_DISPLAY_PATH" \
     >"$RUNTIME_DIR/npu_result_server.log" 2>&1 &
 npu_pid=$!
 setsid "$PYTHON" "$PROJECT_DIR/tools/qwen_vision/manual_recognize_server.py" \
@@ -76,7 +78,7 @@ setsid "$PYTHON" "$PROJECT_DIR/tools/qwen_vision/manual_recognize_server.py" \
     >"$RUNTIME_DIR/manual_server.log" 2>&1 &
 server_pid=$!
 setsid "$PYTHON" "$PROJECT_DIR/tools/qwen_vision/send_result_tcp.py" \
-    --input "$RESULT_PATH" --extra-input "$NPU_RESULT_PATH" \
+    --input "$RESULT_PATH" --extra-input "$NPU_DISPLAY_PATH" \
     --host "${RESULT_HOST:-0.0.0.0}" \
     --port "${RESULT_PORT:-9000}" >"$RUNTIME_DIR/result_tcp.log" 2>&1 &
 tcp_pid=$!

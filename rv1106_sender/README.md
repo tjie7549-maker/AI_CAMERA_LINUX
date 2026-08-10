@@ -191,7 +191,25 @@ ai_cam 预览 DMA-BUF (/tmp/ai_cam_preview.sock)
   -> send_result_tcp.py（--extra-input）-> TCP 9000 -> Qt 显示
 ```
 
-Qt 结果面板会显示 `场景=端侧NPU`、`人数`、`摘要=本地NPU检测：人×N`。
+NPU 输入图像只在 RV1106 本地使用；TCP 9010 发送的是人数、值守与背光状态 JSON，
+不会把 NPU 原始帧上传到千问。
+
+Qt 结果面板会显示 `场景=端侧NPU`、人数和检测摘要。普通人员出现只作为
+检测结果展示，状态保持正常；当前人形模型没有危险行为或禁区规则，不会仅因
+检测到人员触发告警。云端识别返回的告警结果仍按原规则显示。
+
+### NPU 本地值守
+
+实时 NPU 同时负责 LCD 背光值守，默认连续检测到人员 3 次后唤醒，连续无人
+30 秒后休眠。休眠只向 `bl_power` 写入 powerdown，不停止摄像头、RTSP、Qt
+或 NPU；因此重新检测到人员后不需要重建媒体管线。NPU 正常退出时会强制恢复
+背光。可通过 supervisor 环境变量调整：
+
+```sh
+NPU_WAKE_HITS=3
+NPU_IDLE_SECONDS=30
+NPU_BACKLIGHT_PATH=/sys/class/backlight/backlight/bl_power
+```
 
 ### 板端运行（RV1106）
 
@@ -223,10 +241,25 @@ RV1106 不支持板端 Python 推理（lite2 只有 aarch64 包），一律使�
 `manual_recognize_server.py` 新增 `--backend cloud|local`（默认 cloud，
 可用环境变量 `AI_BACKEND` 覆盖）：
 
-- `cloud`：保持原行为，手动识别调用千问。
+- `cloud`：Qt 实时预览每 30 秒自动识别，暂停后由按钮手动识别，两者均调用千问。
 - `local`：手动识别直接返回最新 NPU 检测结果，不调用云端。
 
-supervisor 启动命令中通过 `AI_BACKEND=local` 切换即可。
+supervisor 启动命令中通过 `AI_BACKEND=local` 切换即可。local 模式返回的是
+`npu_latest.json` 中最近一次端侧检测结果；上传的冻结 JPEG 仍会与结果一起按
+`source=manual` 缓存和保存，但当前协议不保证 NPU 检测帧与冻结帧完全相同。
+
+无 Qt 的 headless 专项测试中，`watch_latest_image.py` 读取高频
+`npu_latest.json` 作为云端请求门控。智能终端日常运行由 Qt 根据值守状态每
+30 秒提交一次自动请求，暂停后只允许手动冻结帧请求。Qt 接收的是
+低频 `npu_display.json`，仅在人数或值守状态变化时更新，避免覆盖刚返回的云端
+识别结果。TCP 结果服务还为云端或手动结果保留 10 秒显示优先期。
+
+NPU 检测程序使用独立构建目标，不会参与媒体发送程序链接：
+
+```sh
+make       # 只构建媒体发送程序和脚本
+make npu   # 单独构建 out/npu_detect
+```
 
 ### 基准（2026-08-07，yolov5n 320 int8）
 
@@ -234,4 +267,3 @@ supervisor 启动命令中通过 `AI_BACKEND=local` 切换即可。
 - 与发送端/Qt 共存：推理 53.8 FPS，发送端 CPU/RSS 与 Qt CPU/RSS 无变化，
   预览保持约 14.5 FPS，可用内存波动约 1 MB、无持续增长。
 - 冒烟验证：bus.jpg 检出 3 人（与官方 demo 一致）；实时预览无人时正确输出 0 人。
-

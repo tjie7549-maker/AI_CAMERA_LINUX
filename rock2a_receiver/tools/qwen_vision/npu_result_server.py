@@ -56,6 +56,10 @@ def to_display_document(document: dict[str, Any]) -> dict[str, Any]:
         latency = int(float(document.get("latencyMs", 0)))
     except (TypeError, ValueError):
         latency = 0
+    sentinel_value = document.get("sentinelActive")
+    sentinel_active = sentinel_value if isinstance(sentinel_value, bool) else people > 0
+    display_value = document.get("displayAwake")
+    display_awake = display_value if isinstance(display_value, bool) else sentinel_active
     return {
         "type": "manual_result",
         "source": "local",
@@ -64,12 +68,16 @@ def to_display_document(document: dict[str, Any]) -> dict[str, Any]:
         "success": True,
         "latency_ms": latency,
         "server_latency_ms": 0,
+        "sentinel_active": sentinel_active,
+        "display_awake": display_awake,
         "result": {
             "scene": "端侧NPU",
             "people_count": people,
-            "warning": people > 0,
-            "warning_reason": "本地NPU检测到%d人" % people if people > 0 else "无人",
-            "summary": "本地NPU检测：人×%d" % people,
+            # Person presence is an observation, not an alarm condition.  The
+            # person-only NPU model has no behavior or restricted-zone rules.
+            "warning": False,
+            "warning_reason": "",
+            "summary": "本地NPU检测到%d人" % people if people > 0 else "本地NPU未检测到人员",
             "objects": ["person"] if people > 0 else [],
         },
     }
@@ -77,13 +85,16 @@ def to_display_document(document: dict[str, Any]) -> dict[str, Any]:
 
 class NpuResultServer:
     def __init__(self, host: str, port: int, result_path: Path,
-                 event_path: Path, max_line: int = 4096) -> None:
+                 display_path: Path, event_path: Path,
+                 max_line: int = 4096) -> None:
         self.host = host
         self.port = port
         self.result_path = result_path
+        self.display_path = display_path
         self.event_path = event_path
         self.max_line = max_line
         self._lock = threading.Lock()
+        self._display_key: Optional[tuple[int, bool, bool]] = None
 
     def handle(self, document: dict[str, Any]) -> None:
         people = 0
@@ -92,14 +103,26 @@ class NpuResultServer:
         except (TypeError, ValueError):
             pass
         display = to_display_document(document)
+        display_key = (
+            display["result"]["people_count"],
+            display["sentinel_active"],
+            display["display_awake"],
+        )
         with self._lock:
             write_json_atomically(self.result_path, display)
-            self.event_path.parent.mkdir(parents=True, exist_ok=True)
-            with self.event_path.open("a", encoding="utf-8") as log:
-                log.write(json.dumps(display, ensure_ascii=False, separators=(",", ":")) + "\n")
+            if display_key != self._display_key:
+                write_json_atomically(self.display_path, display)
+                self.event_path.parent.mkdir(parents=True, exist_ok=True)
+                with self.event_path.open("a", encoding="utf-8") as log:
+                    log.write(
+                        json.dumps(display, ensure_ascii=False, separators=(",", ":"))
+                        + "\n"
+                    )
+                self._display_key = display_key
         print(
-            f"[npu] people={people} latency_ms={document.get('latencyMs', '?')} "
-            f"updated={self.result_path}",
+            f"[npu] people={people} active={display['sentinel_active']} "
+            f"display={display['display_awake']} "
+            f"latency_ms={document.get('latencyMs', '?')} updated={self.result_path}",
             flush=True,
         )
 
@@ -156,12 +179,23 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path.home() / "AI_CAMERA_LINUX/rock2a_receiver/runtime/npu_events.log",
     )
+    parser.add_argument(
+        "--display-path",
+        type=Path,
+        help="low-rate Qt result path; defaults to --result-path",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    server = NpuResultServer(args.host, args.port, args.result_path, args.event_path)
+    server = NpuResultServer(
+        args.host,
+        args.port,
+        args.result_path,
+        args.display_path or args.result_path,
+        args.event_path,
+    )
     try:
         server.serve()
     except KeyboardInterrupt:

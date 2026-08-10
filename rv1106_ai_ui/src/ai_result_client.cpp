@@ -176,6 +176,12 @@ bool AiResultClient::parseMessage(const QByteArray &message, AiResult &result,
     result.timestamp = jsonString(root, QStringLiteral("timestamp"), result.timestamp);
     result.model = jsonString(root, QStringLiteral("model"), result.model);
     result.success = root.value(QStringLiteral("success")).toBool(false);
+    result.hasSentinelState = root.contains(QStringLiteral("sentinel_active")) ||
+                              root.contains(QStringLiteral("display_awake"));
+    if (result.hasSentinelState) {
+        result.sentinelActive = root.value(QStringLiteral("sentinel_active")).toBool(false);
+        result.displayAwake = root.value(QStringLiteral("display_awake")).toBool(false);
+    }
     result.type = jsonString(root, QStringLiteral("type"), QString());
     result.source = jsonString(root, QStringLiteral("source"), QString());
     result.requestId = jsonString(root, QStringLiteral("request_id"), QString());
