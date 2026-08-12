@@ -19,7 +19,9 @@ class MainWindow : public QWidget {
 
 public:
     explicit MainWindow(ManualRecognitionClient *manualClient, ResultStorageClient *storageClient,
-                        int autoRecognitionIntervalMs, QWidget *parent = nullptr);
+                        int autoRecognitionIntervalMs,
+                        bool legacyAutoRecognitionEnabled,
+                        QWidget *parent = nullptr);
 
 public slots:
     void updateAiResult(const AiResult &result);
@@ -41,6 +43,7 @@ public slots:
                                     int httpStatus, qint64 elapsedMs);
     void onSaveSucceeded(const QString&,const QString&,const QString&,bool);
     void onSaveFailed(const QString&,const QString&);
+    void onActiveEventRecovered(const QJsonObject &event);
 signals:
     void userExitRequested();
 
@@ -71,6 +74,7 @@ private:
     void setPreviewUiState(PreviewUiState state);
     void updateVideoStatus();
     void applyManualResult(const AiResult &result, qint64 totalElapsedMs);
+    void applyEventResult(const AiResult &result);
     void setStateLabel(QLabel *label, const QString &text,
                        const QString &state);
 
@@ -93,6 +97,7 @@ private:
     QLabel *warningValue_;
     QLabel *warningReasonValue_;
     QLabel *summaryValue_;
+    QLabel *eventValue_;
 
     QLabel *latencyValue_;
     QLabel *totalTokensValue_;
@@ -105,6 +110,7 @@ private:
     QTimer *clockTimer_;
     QTimer *autoRecognitionTimer_;
     int autoRecognitionIntervalMs_;
+    bool legacyAutoRecognitionEnabled_;
     PreviewUiState previewUiState_;
     int previewStreamState_;
     bool sentinelActive_;
@@ -119,6 +125,8 @@ private:
     quint64 manualRequestSequence_;
     quint64 autoRequestSequence_;
     QString saveSource_, saveRequestId_; bool exitConfirm_;
+    QString currentEventId_;
+    QString currentEventState_;
 };
 
 #endif

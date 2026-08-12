@@ -1,12 +1,14 @@
 #include "rtsp_receiver.h"
 
 #include <cerrno>
+#include <algorithm>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <cmath>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -29,6 +31,11 @@ std::string timestampForFilename() {
     std::ostringstream stream;
     stream << std::put_time(&local_time, "%Y%m%d_%H%M%S");
     return stream.str();
+}
+
+std::int64_t epochMilliseconds() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
 }  // namespace
@@ -250,6 +257,13 @@ bool RtspReceiver::processDecodedFrame(AVFrame* frame) {
         last_latest_image_ = now;
         has_latest_image_time_ = true;
     }
+    if (!config_.frame_cache_dir.empty() &&
+        (!has_frame_cache_time_ || now - last_frame_cache_ >=
+         std::chrono::milliseconds(config_.frame_cache_interval_ms))) {
+        saveFrameCache(rgb_frame_);
+        last_frame_cache_ = now;
+        has_frame_cache_time_ = true;
+    }
     return true;
 }
 
@@ -358,6 +372,59 @@ bool RtspReceiver::saveSnapshot(const AVFrame* rgb_frame) {
 
 bool RtspReceiver::updateLatestImage(const AVFrame* rgb_frame) {
     return encodeAndWriteJpeg(rgb_frame, config_.latest_image_path, true);
+}
+
+bool RtspReceiver::saveFrameCache(const AVFrame* rgb_frame) {
+    const std::int64_t captured_at_ms = epochMilliseconds();
+    const std::filesystem::path directory(config_.frame_cache_dir);
+    std::error_code error;
+    std::filesystem::create_directories(directory, error);
+    if (error) return false;
+    const std::string stem = "frame_" + std::to_string(captured_at_ms) + "_" +
+                             std::to_string(decoded_frames_);
+    const std::filesystem::path image_path = directory / (stem + ".jpg");
+    if (!encodeAndWriteJpeg(rgb_frame, image_path.string(), false)) return false;
+
+    double mean = 0.0, square = 0.0, difference = 1.0;
+    std::uint64_t samples = 0;
+    std::vector<std::uint8_t> signature;
+    signature.reserve(static_cast<std::size_t>((rgb_frame->width + 7) / 8) *
+                      static_cast<std::size_t>((rgb_frame->height + 7) / 8));
+    for (int y = 0; y < rgb_frame->height; y += 8) {
+        const std::uint8_t* row = rgb_frame->data[0] + y * rgb_frame->linesize[0];
+        for (int x = 0; x < rgb_frame->width; x += 8) {
+            const std::uint8_t* pixel = row + x * 3;
+            const double gray = 0.299 * pixel[0] + 0.587 * pixel[1] + 0.114 * pixel[2];
+            signature.push_back(static_cast<std::uint8_t>(std::lround(gray)));
+            mean += gray; square += gray * gray; ++samples;
+        }
+    }
+    if (samples) { mean /= samples; square = std::max(0.0, square / samples - mean * mean); }
+    if (last_frame_signature_.size() == signature.size() && !signature.empty()) {
+        double absolute_difference = 0.0;
+        for (std::size_t index = 0; index < signature.size(); ++index)
+            absolute_difference += std::abs(static_cast<int>(signature[index]) -
+                                            static_cast<int>(last_frame_signature_[index]));
+        difference = absolute_difference / (255.0 * static_cast<double>(signature.size()));
+    }
+    last_frame_signature_ = std::move(signature);
+    std::ofstream metadata(directory / (stem + ".json"), std::ios::trunc);
+    metadata << "{\"captured_at_ms\":" << captured_at_ms
+             << ",\"receiver_frame_id\":" << decoded_frames_
+             << ",\"brightness\":" << mean << ",\"variance\":" << square
+             << ",\"difference\":" << difference << "}\n";
+    metadata.close();
+
+    std::vector<std::filesystem::path> cached;
+    for (const auto& entry : std::filesystem::directory_iterator(directory, error))
+        if (!error && entry.path().extension() == ".jpg") cached.push_back(entry.path());
+    std::sort(cached.begin(), cached.end());
+    while (cached.size() > static_cast<std::size_t>(config_.frame_cache_max)) {
+        const std::filesystem::path old = cached.front(); cached.erase(cached.begin());
+        std::filesystem::remove(old, error);
+        std::filesystem::remove(old.parent_path() / (old.stem().string() + ".json"), error);
+    }
+    return true;
 }
 
 bool RtspReceiver::encodeAndWriteJpeg(const AVFrame* rgb_frame,

@@ -25,6 +25,9 @@ void printUsage(const char* program) {
               << "  --interval-ms NUMBER   Snapshot interval in milliseconds\n"
               << "  --latest-image PATH    Atomically updated latest JPEG (disabled by default)\n"
               << "  --latest-interval-ms NUMBER  Latest JPEG update interval (default: 3000)\n"
+              << "  --frame-cache-dir PATH Bounded recent JPEG ring for event matching\n"
+              << "  --frame-cache-interval-ms NUMBER  Ring interval (default: 500)\n"
+              << "  --frame-cache-max NUMBER  Ring capacity (default: 24)\n"
               << "  --duration SECONDS     Stop after this many seconds (0 means Ctrl+C)\n"
               << "  --help                 Show this help\n";
 }
@@ -67,6 +70,12 @@ int main(int argc, char* argv[]) {
                 config.latest_image_path = value;
             } else if (option == "--latest-interval-ms") {
                 config.latest_interval_ms = parsePositive(value, "--latest-interval-ms", false);
+            } else if (option == "--frame-cache-dir") {
+                config.frame_cache_dir = value;
+            } else if (option == "--frame-cache-interval-ms") {
+                config.frame_cache_interval_ms = parsePositive(value, "--frame-cache-interval-ms", false);
+            } else if (option == "--frame-cache-max") {
+                config.frame_cache_max = parsePositive(value, "--frame-cache-max", false);
             } else if (option == "--duration") {
                 config.duration_seconds = parsePositive(value, "--duration", true);
             } else {

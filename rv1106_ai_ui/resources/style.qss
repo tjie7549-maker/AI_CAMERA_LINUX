@@ -148,6 +148,12 @@ QLabel#summaryValue {
     font-size: 16px;
 }
 
+QLabel#eventValue {
+    color: #44c2d7;
+    font-family: "Droid Sans Fallback";
+    font-size: 12px;
+}
+
 QLabel#alertValue {
     font-size: 18px;
     font-weight: 700;

@@ -15,6 +15,7 @@ URL="${RTSP_URL:-rtsp://192.168.50.2:554/live/1}"
 SERVER_PORT="${MANUAL_RECOGNIZE_PORT:-9001}"
 NPU_SERVER_PORT="${NPU_SERVER_PORT:-9010}"
 AI_BACKEND="${AI_BACKEND:-cloud}"
+BIND_ADDRESS="${AI_CAMERA_BIND_ADDRESS:-192.168.50.1}"
 
 for required in "$RECEIVER" "$PYTHON" "$ENV_FILE"; do
     if [ ! -e "$required" ]; then
@@ -68,24 +69,24 @@ setsid "$RECEIVER" --url "$URL" --output "$FRAME_DIR" --interval-ms 5000 \
     --duration 0 >"$RUNTIME_DIR/manual_receiver.log" 2>&1 &
 receiver_pid=$!
 setsid "$PYTHON" "$PROJECT_DIR/tools/qwen_vision/npu_result_server.py" \
-    --host 0.0.0.0 --port "$NPU_SERVER_PORT" --result-path "$NPU_RESULT_PATH" \
+    --host "$BIND_ADDRESS" --port "$NPU_SERVER_PORT" --result-path "$NPU_RESULT_PATH" \
     --display-path "$NPU_DISPLAY_PATH" \
     >"$RUNTIME_DIR/npu_result_server.log" 2>&1 &
 npu_pid=$!
 setsid "$PYTHON" "$PROJECT_DIR/tools/qwen_vision/manual_recognize_server.py" \
-    --host 0.0.0.0 --port "$SERVER_PORT" --result-path "$RESULT_PATH" \
+    --host "$BIND_ADDRESS" --port "$SERVER_PORT" --result-path "$RESULT_PATH" \
     --backend "$AI_BACKEND" --npu-result "$NPU_RESULT_PATH" \
     >"$RUNTIME_DIR/manual_server.log" 2>&1 &
 server_pid=$!
 setsid "$PYTHON" "$PROJECT_DIR/tools/qwen_vision/send_result_tcp.py" \
     --input "$RESULT_PATH" --extra-input "$NPU_DISPLAY_PATH" \
-    --host "${RESULT_HOST:-0.0.0.0}" \
+    --host "${RESULT_HOST:-$BIND_ADDRESS}" \
     --port "${RESULT_PORT:-9000}" >"$RUNTIME_DIR/result_tcp.log" 2>&1 &
 tcp_pid=$!
 
 for _ in $(seq 1 15); do
     if "$PYTHON" -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:${SERVER_PORT}/health', timeout=1).read()" >/dev/null 2>&1 && kill -0 "$npu_pid" 2>/dev/null; then
-        echo "Manual recognition ready: http://0.0.0.0:${SERVER_PORT}/recognize"
+        echo "Manual recognition ready: http://${BIND_ADDRESS}:${SERVER_PORT}/recognize"
         echo "Press Ctrl+C to stop."
         break
     fi

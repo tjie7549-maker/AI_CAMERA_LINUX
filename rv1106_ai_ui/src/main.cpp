@@ -115,12 +115,21 @@ int main(int argc, char *argv[])
         QStringList() << QStringLiteral("auto-recognition-interval-ms"),
         QStringLiteral("Automatic cloud-recognition interval while live"),
         QStringLiteral("milliseconds"), QStringLiteral("30000"));
+    QCommandLineOption eventApiUrlOption(
+        QStringList() << QStringLiteral("event-api-url"),
+        QStringLiteral("ROCK 2A event HTTP base URL"),
+        QStringLiteral("url"), QStringLiteral("http://192.168.50.1:9011"));
+    QCommandLineOption legacyAutoRecognitionOption(
+        QStringList() << QStringLiteral("enable-legacy-auto-recognition"),
+        QStringLiteral("Enable the legacy fixed-interval recognition timer"));
     parser.addOption(serverIpOption);
     parser.addOption(serverPortOption);
     parser.addOption(previewShmOption);
     parser.addOption(previewTimeoutOption);
     parser.addOption(recognizeUrlOption);
     parser.addOption(autoRecognitionIntervalOption);
+    parser.addOption(eventApiUrlOption);
+    parser.addOption(legacyAutoRecognitionOption);
     parser.process(app);
 
     const QString serverIp = parser.value(serverIpOption);
@@ -166,6 +175,13 @@ int main(int argc, char *argv[])
                      parser.value(autoRecognitionIntervalOption).toLocal8Bit().constData());
         return 2;
     }
+    const QUrl eventApiUrl(parser.value(eventApiUrlOption));
+    if (!eventApiUrl.isValid() || eventApiUrl.scheme() != QStringLiteral("http") ||
+        eventApiUrl.host().isEmpty()) {
+        std::fprintf(stderr, "Invalid --event-api-url: %s\n",
+                     parser.value(eventApiUrlOption).toLocal8Bit().constData());
+        return 2;
+    }
 
     const QSize screenSize = app.primaryScreen()->size();
     if (screenSize != QSize(720, 720)) {
@@ -176,9 +192,13 @@ int main(int argc, char *argv[])
     ManualRecognitionClient manualRecognitionClient;
     manualRecognitionClient.setRecognizeUrl(recognizeUrl);
     ResultStorageClient storageClient;
-    storageClient.setUrl(QUrl(QStringLiteral("http://192.168.50.1:9001/save-result")));
+    QUrl saveUrl(recognizeUrl);
+    saveUrl.setPath(QStringLiteral("/save-result"));
+    storageClient.setUrl(saveUrl);
+    storageClient.setEventApiBase(eventApiUrl);
     MainWindow window(&manualRecognitionClient, &storageClient,
-                      autoRecognitionIntervalMs);
+                      autoRecognitionIntervalMs,
+                      parser.isSet(legacyAutoRecognitionOption));
     StatusController statusController;
     AiResultClient client(serverIp, static_cast<quint16>(portValue));
     PreviewShmReader previewReader(previewShm, previewTimeoutMs);

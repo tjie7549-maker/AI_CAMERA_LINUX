@@ -15,6 +15,7 @@ LATEST_RESULT="$RUNTIME_DIR/latest_result.json"
 NPU_RESULT_PATH="${NPU_RESULT_PATH:-$RUNTIME_DIR/npu_latest.json}"
 NPU_DISPLAY_PATH="${NPU_DISPLAY_PATH:-$RUNTIME_DIR/npu_display.json}"
 NPU_SERVER_PORT="${NPU_SERVER_PORT:-9010}"
+BIND_ADDRESS="${AI_CAMERA_BIND_ADDRESS:-192.168.50.1}"
 NPU_PRESENCE_STALE_SECONDS="${NPU_PRESENCE_STALE_SECONDS:-3}"
 RECEIVER_LOG="$RUNTIME_DIR/receiver.log"
 WATCHER_LOG="$RUNTIME_DIR/qwen_watch.log"
@@ -190,7 +191,7 @@ setsid "$PYTHON" "$PROJECT_DIR/tools/qwen_vision/watch_latest_image.py" \
 watcher_pid=$!
 
 setsid "$PYTHON" "$PROJECT_DIR/tools/qwen_vision/npu_result_server.py" \
-    --host 0.0.0.0 --port "$NPU_SERVER_PORT" \
+    --host "$BIND_ADDRESS" --port "$NPU_SERVER_PORT" \
     --result-path "$NPU_RESULT_PATH" --display-path "$NPU_DISPLAY_PATH" \
     >"$NPU_LOG" 2>&1 &
 npu_pid=$!
@@ -198,7 +199,7 @@ npu_pid=$!
 setsid "$PYTHON" "$PROJECT_DIR/tools/qwen_vision/send_result_tcp.py" \
     --input "$LATEST_RESULT" \
     --extra-input "$NPU_DISPLAY_PATH" \
-    --host "${RESULT_HOST:-0.0.0.0}" \
+    --host "${RESULT_HOST:-$BIND_ADDRESS}" \
     --port "${RESULT_PORT:-9000}" >"$TCP_LOG" 2>&1 &
 tcp_pid=$!
 
@@ -218,7 +219,7 @@ echo "Monitoring started. Press Ctrl+C to stop."
 echo "Result: $LATEST_RESULT"
 echo "Logs: $RECEIVER_LOG, $WATCHER_LOG, $TCP_LOG"
 echo "NPU sentinel: $NPU_RESULT_PATH (log: $NPU_LOG)"
-echo "TCP result server: ${RESULT_HOST:-0.0.0.0}:${RESULT_PORT:-9000}"
+echo "TCP result server: ${RESULT_HOST:-$BIND_ADDRESS}:${RESULT_PORT:-9000}"
 
 last_fingerprint=""
 while receiver_is_running && tcp_is_running && kill -0 "$npu_pid" 2>/dev/null; do

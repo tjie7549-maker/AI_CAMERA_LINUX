@@ -16,7 +16,7 @@ include $(MEDIA_PARAM)
 TARGET := simple_vi_get_frame_send_vo_rv1106
 MEDIA_SOURCES := $(filter-out src/npu_detect.c,$(wildcard src/*.c))
 NPU_TARGET := npu_detect
-NPU_SOURCE := src/npu_detect.c
+NPU_SOURCE := src/npu_detect.c src/iou_tracker.c
 RKNN_ROOT ?= /home/summary/linux/tools/rknn_model_zoo/3rdparty/rknpu2
 RKNN_INCLUDE ?= $(RKNN_ROOT)/include
 RKNN_LIB_DIR ?= $(RKNN_ROOT)/Linux/armhf-uclibc
@@ -24,6 +24,7 @@ SCRIPTS := run_simple_isp_vi_to_lcd_rv1106.sh run_ai_sender.sh run_ai_headless_p
 OUT_DIR := out
 
 CC := $(RK_MEDIA_CROSS)-gcc
+HOST_CC ?= gcc
 
 CPPFLAGS := \
 	-Iinclude \
@@ -45,7 +46,7 @@ LDFLAGS := \
 	-Wl,--gc-sections -Wl,--as-needed
 LDLIBS := -lrockchip_mpp -lrga -ldrm -lpthread -lstdc++ -lrockit_full -lrkaiq -lrtsp -lrt
 
-.PHONY: all npu clean help
+.PHONY: all npu tracker-test clean help
 
 all: $(OUT_DIR)/$(TARGET) $(SCRIPTS:%=$(OUT_DIR)/%)
 
@@ -61,6 +62,10 @@ $(OUT_DIR)/$(NPU_TARGET): $(NPU_SOURCE) include/preview_shm_protocol.h | $(OUT_D
 	$(CC) -Iinclude -I$(RKNN_INCLUDE) -O2 -Wall $(NPU_SOURCE) -o $@ \
 		-L$(RKNN_LIB_DIR) -Wl,-rpath-link,$(RKNN_LIB_DIR) -lrknnmrt -lm -lrt
 
+tracker-test:
+	$(HOST_CC) -Iinclude -O2 -Wall -Werror src/iou_tracker.c tests/test_iou_tracker.c -o /tmp/iou_tracker_test
+	/tmp/iou_tracker_test
+
 $(OUT_DIR)/%: % | $(OUT_DIR)
 	install -m 755 $< $@
 
@@ -70,5 +75,6 @@ clean:
 help:
 	@printf '%s\n' 'make        Build binary and startup script into out/'
 	@printf '%s\n' 'make npu    Build the standalone RV1106 RKNN detector into out/'
+	@printf '%s\n' 'make tracker-test  Build and run host-independent IoU tracker tests/'
 	@printf '%s\n' 'make clean  Remove out/'
 	@printf '%s\n' 'SDK_DIR=/path/to/luckfox-pico make  Use another SDK path'

@@ -30,7 +30,12 @@ NPU_SERVER_PORT=${NPU_SERVER_PORT:-9010}
 NPU_INTERVAL_MS=${NPU_INTERVAL_MS:-300}
 NPU_IDLE_SECONDS=${NPU_IDLE_SECONDS:-30}
 NPU_WAKE_HITS=${NPU_WAKE_HITS:-3}
+TRACK_IOU_THRESHOLD=${TRACK_IOU_THRESHOLD:-0.3}
+TRACK_MAX_MISSED=${TRACK_MAX_MISSED:-4}
+TRACK_MIN_HITS=${TRACK_MIN_HITS:-3}
 NPU_BACKLIGHT_PATH=${NPU_BACKLIGHT_PATH:-/sys/class/backlight/backlight/bl_power}
+ENABLE_LEGACY_AUTO_RECOGNITION=${ENABLE_LEGACY_AUTO_RECOGNITION:-0}
+export ENABLE_LEGACY_AUTO_RECOGNITION
 RESTART_COUNT=0
 CONSECUTIVE_FAILS=0
 FIRST_RESTART_TS=0
@@ -119,6 +124,8 @@ start_npu() {
         --model "$NPU_MODEL" --server-ip "$NPU_SERVER_IP" \
         --port "$NPU_SERVER_PORT" --interval-ms "$NPU_INTERVAL_MS" \
         --idle-seconds "$NPU_IDLE_SECONDS" --wake-hits "$NPU_WAKE_HITS" \
+        --track-iou-threshold "$TRACK_IOU_THRESHOLD" --track-max-missed "$TRACK_MAX_MISSED" \
+        --track-min-hits "$TRACK_MIN_HITS" \
         --backlight-path "$NPU_BACKLIGHT_PATH" \
         >>"$NPU_LOG" 2>&1 &
     npu_pid=$!
@@ -135,9 +142,16 @@ stop_child() {
             sleep 1
             i=$((i + 1))
         done
-        kill -KILL "$pid" 2>/dev/null || true
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -KILL "$pid" 2>/dev/null || true
+            sleep 1
+        fi
     fi
-    wait "$pid" 2>/dev/null || true
+    if kill -0 "$pid" 2>/dev/null; then
+        log "child pid=$pid did not exit after TERM/KILL; leaving kernel-blocked process to init"
+    else
+        wait "$pid" 2>/dev/null || true
+    fi
 }
 
 stop_chain() {
@@ -195,6 +209,8 @@ start_chain() {
     log "starting sender"
     start_sender
     if ! wait_sock; then
+        log "sender startup failed; cleaning partial chain"
+        stop_chain
         return 1
     fi
     log "starting Qt"

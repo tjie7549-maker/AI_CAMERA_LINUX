@@ -10,6 +10,9 @@ import socket
 import sys
 import threading
 import time
+import queue
+import urllib.error
+import urllib.request
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Optional
@@ -39,7 +42,9 @@ def parse_line(line: bytes) -> Optional[dict[str, Any]]:
         document = json.loads(line.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
         return None
-    if not isinstance(document, dict) or document.get("type") != "npu":
+    if not isinstance(document, dict):
+        return None
+    if document.get("type") != "npu" and document.get("message_type") not in {"detection", "track.update"}:
         return None
     return document
 
@@ -47,18 +52,19 @@ def parse_line(line: bytes) -> Optional[dict[str, Any]]:
 def to_display_document(document: dict[str, Any]) -> dict[str, Any]:
     """Shape the wire message into the schema the RV1106 Qt UI expects."""
     try:
-        people = int(document.get("peopleCount", 0))
+        people = int(document.get("peopleCount", document.get("people_count",
+                     len(document.get("tracks", [])) if isinstance(document.get("tracks"), list) else 0)))
     except (TypeError, ValueError):
         people = 0
     if people < 0:
         people = 0
     try:
-        latency = int(float(document.get("latencyMs", 0)))
+        latency = int(float(document.get("latencyMs", document.get("latency_ms", 0))))
     except (TypeError, ValueError):
         latency = 0
-    sentinel_value = document.get("sentinelActive")
+    sentinel_value = document.get("sentinelActive", document.get("sentinel_active"))
     sentinel_active = sentinel_value if isinstance(sentinel_value, bool) else people > 0
-    display_value = document.get("displayAwake")
+    display_value = document.get("displayAwake", document.get("display_awake"))
     display_awake = display_value if isinstance(display_value, bool) else sentinel_active
     return {
         "type": "manual_result",
@@ -83,18 +89,48 @@ def to_display_document(document: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def to_state_document(document: dict[str, Any], display: dict[str, Any]) -> dict[str, Any]:
+    """Keep the v1 track payload while preserving legacy local consumers."""
+    state = dict(document)
+    state.setdefault("message_type", "track.update")
+    state["people_count"] = display["result"]["people_count"]
+    state["sentinel_active"] = display["sentinel_active"]
+    state["display_awake"] = display["display_awake"]
+    state["latency_ms"] = display["latency_ms"]
+    state.setdefault("result", display["result"])
+    return state
+
+
 class NpuResultServer:
     def __init__(self, host: str, port: int, result_path: Path,
                  display_path: Path, event_path: Path,
-                 max_line: int = 4096) -> None:
+                 event_url: str = "", max_line: int = 65536) -> None:
         self.host = host
         self.port = port
         self.result_path = result_path
         self.display_path = display_path
         self.event_path = event_path
         self.max_line = max_line
+        self.event_url = event_url
         self._lock = threading.Lock()
         self._display_key: Optional[tuple[int, bool, bool]] = None
+        self._event_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=128)
+        if self.event_url:
+            threading.Thread(target=self._event_worker, daemon=True).start()
+
+    def _event_worker(self) -> None:
+        while True:
+            document = self._event_queue.get()
+            try:
+                data = json.dumps(document, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                request = urllib.request.Request(self.event_url, data=data,
+                                                 headers={"Content-Type": "application/json"}, method="POST")
+                with urllib.request.urlopen(request, timeout=1.0) as response:
+                    response.read(1024)
+            except (OSError, urllib.error.URLError) as error:
+                print(f"[npu-server] event forward failed: {error}", file=sys.stderr, flush=True)
+            finally:
+                self._event_queue.task_done()
 
     def handle(self, document: dict[str, Any]) -> None:
         people = 0
@@ -103,13 +139,14 @@ class NpuResultServer:
         except (TypeError, ValueError):
             pass
         display = to_display_document(document)
+        state = to_state_document(document, display)
         display_key = (
             display["result"]["people_count"],
             display["sentinel_active"],
             display["display_awake"],
         )
         with self._lock:
-            write_json_atomically(self.result_path, display)
+            write_json_atomically(self.result_path, state)
             if display_key != self._display_key:
                 write_json_atomically(self.display_path, display)
                 self.event_path.parent.mkdir(parents=True, exist_ok=True)
@@ -119,6 +156,13 @@ class NpuResultServer:
                         + "\n"
                     )
                 self._display_key = display_key
+        if self.event_url:
+            forwarded = dict(document)
+            forwarded["received_at_ms"] = int(time.time() * 1000)
+            try:
+                self._event_queue.put_nowait(forwarded)
+            except queue.Full:
+                print("[npu-server] event queue full; dropping newest message", file=sys.stderr, flush=True)
         print(
             f"[npu] people={people} active={display['sentinel_active']} "
             f"display={display['display_awake']} "
@@ -152,12 +196,20 @@ class NpuResultServer:
                     if not chunk:
                         break
                     buffer += chunk
+                    if len(buffer) > self.max_line and b"\n" not in buffer:
+                        print("[npu-server] unterminated oversized line rejected",
+                              file=sys.stderr, flush=True)
+                        buffer = b""
+                        continue
                     while b"\n" in buffer:
                         line, buffer = buffer.split(b"\n", 1)
                         line = line.strip()
                         if not line:
                             continue
-                        document = parse_line(line[: self.max_line])
+                        if len(line) > self.max_line:
+                            print("[npu-server] oversized line rejected", file=sys.stderr, flush=True)
+                            continue
+                        document = parse_line(line)
                         if document is not None:
                             self.handle(document)
         except OSError as error:
@@ -167,13 +219,14 @@ class NpuResultServer:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="NPU detection result receiver")
-    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--host", default="192.168.50.1")
     parser.add_argument("--port", type=int, default=9010)
     parser.add_argument(
         "--result-path",
         type=Path,
         default=Path.home() / "AI_CAMERA_LINUX/rock2a_receiver/runtime/npu_latest.json",
     )
+    parser.add_argument("--event-url", default="http://192.168.50.1:9011/ingest")
     parser.add_argument(
         "--event-path",
         type=Path,
@@ -195,6 +248,7 @@ def main() -> int:
         args.result_path,
         args.display_path or args.result_path,
         args.event_path,
+        args.event_url,
     )
     try:
         server.serve()

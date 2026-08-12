@@ -24,7 +24,14 @@ struct AiResult {
           displayAwake(false),
           frameId(0),
           frameTimestampNs(0),
-          serverLatencyMs(0)
+          serverLatencyMs(0),
+          schemaVersion(0),
+          capturedAtMs(0),
+          currentPeople(0),
+          maxPeople(0),
+          trackCount(0),
+          durationMs(0),
+          bestFrameId(0)
     {
     }
 
@@ -54,6 +61,20 @@ struct AiResult {
     quint64 frameId;
     quint64 frameTimestampNs;
     qint64 serverLatencyMs;
+
+    int schemaVersion;
+    QString messageType;
+    QString cameraId;
+    QString eventId;
+    qint64 capturedAtMs;
+    QString eventState;
+    int currentPeople;
+    int maxPeople;
+    int trackCount;
+    qint64 durationMs;
+    QString cloudState;
+    quint64 bestFrameId;
+    QString frameMatch;
 
     QString errorType;
     QString errorMessage;

@@ -7,6 +7,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <math.h>
 #include <netinet/in.h>
 #include <signal.h>
@@ -15,12 +16,14 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
+#include <sys/select.h>
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
 
 #include "rknn_api.h"
+#include "iou_tracker.h"
 #include "preview_shm_protocol.h"
 
 #ifdef NPU_DETECT_TEST_IMAGE
@@ -267,6 +270,15 @@ static int nms(Box *boxes, int count)
     return keep;
 }
 
+/* Convert YOLO's 320x320 letterbox coordinates back to preview-normalized xywh. */
+static TrackerDetection box_to_preview_detection(const Box *box, int preview_w, int preview_h)
+{
+    return iou_tracker_from_letterbox(box->x, box->y, box->w, box->h,
+                                      box->score, PERSON_CLASS,
+                                      MODEL_SIZE, MODEL_SIZE,
+                                      preview_w, preview_h);
+}
+
 static int connect_rock(const char *ip, int port)
 {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -275,11 +287,36 @@ static int connect_rock(const char *ip, int port)
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons((uint16_t)port);
-    if (inet_pton(AF_INET, ip, &addr.sin_addr) != 1 ||
-        connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+    if (inet_pton(AF_INET, ip, &addr.sin_addr) != 1) {
         close(fd);
         return -1;
     }
+    const int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) != 0) {
+        close(fd);
+        return -1;
+    }
+    int result = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
+    if (result != 0 && errno != EINPROGRESS) {
+        close(fd);
+        return -1;
+    }
+    if (result != 0) {
+        fd_set writable;
+        FD_ZERO(&writable);
+        FD_SET(fd, &writable);
+        struct timeval timeout = {.tv_sec = 0, .tv_usec = 200000};
+        result = select(fd + 1, NULL, &writable, NULL, &timeout);
+        int socket_error = 0;
+        socklen_t error_size = sizeof(socket_error);
+        if (result <= 0 || getsockopt(fd, SOL_SOCKET, SO_ERROR,
+                                     &socket_error, &error_size) != 0 ||
+            socket_error != 0) {
+            close(fd);
+            return -1;
+        }
+    }
+    /* Keep the socket nonblocking so a slow or disconnected peer never stalls NPU duty. */
     return fd;
 }
 
@@ -367,6 +404,9 @@ int main(int argc, char **argv)
     int interval_ms = 300;
     int idle_seconds = DEFAULT_IDLE_SECONDS;
     int wake_hits = DEFAULT_WAKE_HITS;
+    float track_iou_threshold = 0.3f;
+    int track_max_missed = 4;
+    int track_min_hits = 3;
     int control_backlight = 1;
     const char *backlight_path = DEFAULT_BACKLIGHT_PATH;
     const char *test_image = NULL;
@@ -379,6 +419,9 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--interval-ms") && i + 1 < argc) interval_ms = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--idle-seconds") && i + 1 < argc) idle_seconds = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--wake-hits") && i + 1 < argc) wake_hits = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--track-iou-threshold") && i + 1 < argc) track_iou_threshold = (float)atof(argv[++i]);
+        else if (!strcmp(argv[i], "--track-max-missed") && i + 1 < argc) track_max_missed = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--track-min-hits") && i + 1 < argc) track_min_hits = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--backlight-path") && i + 1 < argc) backlight_path = argv[++i];
         else if (!strcmp(argv[i], "--no-backlight-control")) control_backlight = 0;
         else if (!strcmp(argv[i], "--image") && i + 1 < argc) test_image = argv[++i];
@@ -386,14 +429,17 @@ int main(int argc, char **argv)
             fprintf(stderr,
                     "usage: %s [--model M] [--shm NAME] [--server-ip IP] "
                     "[--port P] [--interval-ms N] [--idle-seconds N] "
-                    "[--wake-hits N] [--backlight-path PATH] "
+                    "[--wake-hits N] [--track-iou-threshold F] [--track-max-missed N] "
+                    "[--track-min-hits N] [--backlight-path PATH] "
                     "[--no-backlight-control] [--image FILE]\n",
                     argv[0]);
             return 2;
         }
     }
-    if (interval_ms <= 0 || idle_seconds <= 0 || wake_hits <= 0) {
-        fprintf(stderr, "interval-ms, idle-seconds and wake-hits must be positive\n");
+    if (interval_ms <= 0 || idle_seconds <= 0 || wake_hits <= 0 ||
+        track_iou_threshold <= 0.0f || track_iou_threshold > 1.0f ||
+        track_max_missed < 0 || track_min_hits <= 0) {
+        fprintf(stderr, "invalid timing or tracker argument\n");
         return 2;
     }
     if (test_image) {
@@ -464,6 +510,7 @@ int main(int argc, char **argv)
     unsigned char *input_rgb = (unsigned char *)malloc((size_t)MODEL_SIZE * MODEL_SIZE * 3);
     if (!input_rgb) return 1;
     void *shm_map = MAP_FAILED;
+    size_t shm_bytes = 0;
     int shm_fd = -1;
     int preview_w = 384, preview_h = 216, preview_stride = 1152;
     unsigned char *stbi_pix = NULL;
@@ -478,13 +525,18 @@ int main(int argc, char **argv)
             fprintf(stderr, "bad shm size\n");
             return 1;
         }
-        shm_map = mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_SHARED, shm_fd, 0);
+        shm_bytes = (size_t)st.st_size;
+        shm_map = mmap(NULL, shm_bytes, PROT_READ, MAP_SHARED, shm_fd, 0);
         if (shm_map == MAP_FAILED) { fprintf(stderr, "mmap fail\n"); return 1; }
         PreviewShmHeader *hdr = (PreviewShmHeader *)shm_map;
         if (hdr->magic != PREVIEW_SHM_MAGIC) { fprintf(stderr, "bad shm magic\n"); return 1; }
         preview_w = (int)hdr->width;
         preview_h = (int)hdr->height;
         preview_stride = (int)hdr->stride;
+        if (hdr->buffer_count != 2) {
+            fprintf(stderr, "unsupported preview buffer count: %u\n", hdr->buffer_count);
+            return 1;
+        }
         fprintf(stderr, "preview %dx%d stride=%d buffers=%d\n", preview_w, preview_h, preview_stride, hdr->buffer_count);
         if (preview_receive_fds(buf_fds) != 0) {
             fprintf(stderr, "receive preview fds fail\n");
@@ -517,6 +569,7 @@ int main(int argc, char **argv)
     long long total_infer_ms = 0;
     long long total_frames = 0;
     double sentinel_started_ms = now_ms();
+    const double epoch_from_monotonic_ms = now_epoch_ms() - now_ms();
     SentinelState sentinel = {
         .backlight_path = backlight_path,
         .idle_timeout_ms = idle_seconds * 1000.0,
@@ -528,11 +581,17 @@ int main(int argc, char **argv)
         .display_awake = 1,
         .control_backlight = control_backlight,
     };
+    IouTracker tracker;
+    iou_tracker_init(&tracker, track_iou_threshold, (uint32_t)track_max_missed,
+                     (uint32_t)track_min_hits);
     fprintf(stderr,
-            "[sentinel] enabled idle=%ds wake_hits=%d backlight_control=%s\n",
-            idle_seconds, wake_hits, control_backlight ? "on" : "off");
+            "[sentinel] enabled idle=%ds wake_hits=%d tracker=iou%.2f missed=%d min_hits=%d backlight_control=%s\n",
+            idle_seconds, wake_hits, track_iou_threshold, track_max_missed, track_min_hits,
+            control_backlight ? "on" : "off");
     while (!g_stop) {
         double frame_start = now_ms();
+        uint64_t frame_id = total_frames + 1;
+        uint64_t captured_at_ms = (uint64_t)now_epoch_ms();
         if (!test_image) {
             PreviewShmHeader *hdr = (PreviewShmHeader *)shm_map;
             uint32_t seq = __atomic_load_n(&hdr->sequence, __ATOMIC_ACQUIRE);
@@ -541,6 +600,12 @@ int main(int argc, char **argv)
                 continue;
             }
             uint32_t idx = hdr->active_index % hdr->buffer_count;
+            frame_id = __atomic_load_n(&hdr->last_frame_id, __ATOMIC_ACQUIRE);
+            const uint64_t frame_monotonic_ns =
+                __atomic_load_n(&hdr->last_frame_monotonic_ns, __ATOMIC_ACQUIRE);
+            if (frame_monotonic_ns > 0)
+                captured_at_ms = (uint64_t)(frame_monotonic_ns / 1000000.0 +
+                                            epoch_from_monotonic_ms);
             frame_rgb = buf_maps[idx];
         }
         if (!frame_rgb) break;
@@ -558,27 +623,52 @@ int main(int argc, char **argv)
         int count = 0;
         for (int i = 0; i < 3; i++) decode_head(&heads[i], boxes, &count);
         count = nms(boxes, count);
-        int persons = count;
+        TrackerDetection detections[MAX_BOXES];
+        for (int i = 0; i < count; ++i)
+            detections[i] = box_to_preview_detection(&boxes[i], preview_w, preview_h);
+        iou_tracker_update(&tracker, detections, (uint32_t)count);
+        const int persons = iou_tracker_confirmed_count(&tracker);
         sentinel_update(&sentinel, persons, now_ms());
 
-        float scale = fminf((float)MODEL_SIZE / preview_w, (float)MODEL_SIZE / preview_h);
-        char json[640];
+        const double produced_at_ms = now_epoch_ms();
+        char tracks_json[8192];
+        int tracks_pos = snprintf(tracks_json, sizeof(tracks_json), "[");
+        int emitted_tracks = 0;
+        for (uint32_t i = 0; i < tracker.count; ++i) {
+            const TrackerTrack *track = &tracker.tracks[i];
+            if (track->hits < tracker.min_hits || track->missed_frames != 0)
+                continue;
+            const int written = snprintf(tracks_json + tracks_pos,
+                                         sizeof(tracks_json) - (size_t)tracks_pos,
+                                         "%s{\"track_id\":%" PRIu32 ",\"class\":\"person\",\"confidence\":%.4f,\"bbox\":{\"x\":%.5f,\"y\":%.5f,\"w\":%.5f,\"h\":%.5f},\"age_frames\":%" PRIu32 ",\"missed_frames\":%" PRIu32 "}",
+                                         emitted_tracks ? "," : "", track->track_id,
+                                         track->confidence, track->x, track->y, track->w, track->h,
+                                         track->age_frames, track->missed_frames);
+            if (written < 0 || tracks_pos + written >= (int)sizeof(tracks_json) - 2)
+                break;
+            tracks_pos += written;
+            emitted_tracks++;
+        }
+        snprintf(tracks_json + tracks_pos, sizeof(tracks_json) - (size_t)tracks_pos, "]");
+        char json[12288];
         int pos = snprintf(json, sizeof(json),
-                           "{\"type\":\"npu\",\"source\":\"local\",\"timestamp\":%.0f,"
+                           "{\"schema_version\":1,\"message_type\":\"track.update\","
+                           "\"camera_id\":\"rv1106-01\",\"source\":\"local_npu\","
+                           "\"frame_id\":%" PRIu64 ",\"captured_at_ms\":%" PRIu64 ","
+                           "\"produced_at_ms\":%.0f,\"type\":\"npu\",\"timestamp\":%.0f,"
                            "\"model\":\"yolov5n-320\",\"success\":true,\"latencyMs\":%.1f,"
                            "\"peopleCount\":%d,\"sentinelActive\":%s,\"displayAwake\":%s,"
-                           "\"objects\":%s,\"warning\":false,"
+                           "\"tracks\":%s,\"objects\":%s,\"warning\":false,"
                            "\"summary\":\"本地NPU检测：人×%d\",\"scene\":\"端侧NPU\"}\n",
-                           now_epoch_ms(), t1 - t0, persons,
+                           frame_id, captured_at_ms, produced_at_ms, produced_at_ms, t1 - t0, persons,
                            sentinel.active ? "true" : "false",
                            sentinel.display_awake ? "true" : "false",
-                           persons ? "[\"person\"]" : "[]",
+                           tracks_json, persons ? "[\"person\"]" : "[]",
                            persons);
         if (pos < 0)
             break;
         if (pos >= (int)sizeof(json))
             pos = (int)sizeof(json) - 1;
-        (void)scale;
 
         if (sock < 0) sock = connect_rock(server_ip, server_port);
         if (sock >= 0) {
@@ -589,8 +679,8 @@ int main(int argc, char **argv)
         }
 
         double total = now_ms() - frame_start;
-        fprintf(stderr, "[npu] frame=%lld persons=%d boxes=%d infer=%.1fms loop=%.1fms avail=%lldKB\n",
-                (long long)total_frames, persons, count, t1 - t0, total,
+        fprintf(stderr, "[npu] frame=%" PRIu64 " persons=%d tracks=%d boxes=%d infer=%.1fms loop=%.1fms avail=%lldKB\n",
+                frame_id, persons, emitted_tracks, count, t1 - t0, total,
                 read_avail_kb());
         if (test_image) break;
         int sleep_ms = interval_ms - (int)total;
@@ -612,7 +702,7 @@ int main(int argc, char **argv)
         if (buf_maps[bi] && buf_maps[bi] != MAP_FAILED) munmap(buf_maps[bi], buf_bytes);
         if (buf_fds[bi] >= 0) close(buf_fds[bi]);
     }
-    if (shm_map != MAP_FAILED) munmap(shm_map, 0);
+    if (shm_map != MAP_FAILED) munmap(shm_map, shm_bytes);
     if (shm_fd >= 0) close(shm_fd);
     free(input_rgb);
     rknn_destroy(ctx);

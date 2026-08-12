@@ -13,7 +13,7 @@ stopping=0
 
 usage() {
     cat <<EOF
-Usage: $0 [--mode manual|auto] [run_ai_pipeline.sh options]
+Usage: $0 [--mode event|manual|auto] [legacy pipeline options]
 
 Start the RV1106 camera/RTSP/Qt terminal and the local ROCK 2A AI pipeline.
 Press Ctrl+C once to stop both boards cleanly.
@@ -24,7 +24,7 @@ Environment:
 EOF
 }
 
-MODE=manual
+MODE=event
 if [ "${1:-}" = "--mode" ]; then
     MODE=${2:-}
     shift 2
@@ -32,7 +32,7 @@ elif [ "${1:-}" = --mode=* ]; then
     MODE=${1#--mode=}
     shift
 fi
-case "$MODE" in manual|auto) ;; *) echo "Invalid mode: $MODE" >&2; exit 1 ;; esac
+case "$MODE" in event|manual|auto) ;; *) echo "Invalid mode: $MODE" >&2; exit 1 ;; esac
 
 remote_run() {
     ssh -o BatchMode=yes -o ConnectTimeout=8 "$RV1106_HOST" "$@"
@@ -148,7 +148,9 @@ if ! remote_run "test -S /tmp/ai_cam_preview.sock" >/dev/null 2>&1; then
 fi
 
 echo "Starting ROCK 2A $MODE AI pipeline..."
-if [ "$MODE" = "manual" ]; then
+if [ "$MODE" = "event" ]; then
+    AI_CAMERA_MODE=event setsid "$PROJECT_DIR/run_rock2a_supervisor.sh" &
+elif [ "$MODE" = "manual" ]; then
     setsid "$PROJECT_DIR/run_manual_ai_pipeline.sh" "$@" &
 else
     setsid "$PROJECT_DIR/run_ai_pipeline.sh" "$@" &

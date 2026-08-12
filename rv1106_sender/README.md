@@ -185,18 +185,19 @@ RV1106 内置 RKNPU（0.5 TOPS int8），可在摄像头本地运行 yolov5n
 
 ```
 ai_cam 预览 DMA-BUF (/tmp/ai_cam_preview.sock)
-  -> npu_detect（读帧 + letterbox 320x320 + RKNN 推理 + 人形过滤）
+  -> npu_detect（letterbox 320x320 + 人形 bbox + IoU tracker）
   -> TCP 9010 -> ROCK 2A npu_result_server.py
-  -> runtime/ai_cam/npu_latest.json
-  -> send_result_tcp.py（--extra-input）-> TCP 9000 -> Qt 显示
+  -> event_service.py -> event_id / 最佳帧 / SQLite / 云端策略
+  -> send_result_tcp.py -> TCP 9000 -> Qt 事件展示
 ```
 
-NPU 输入图像只在 RV1106 本地使用；TCP 9010 发送的是人数、值守与背光状态 JSON，
-不会把 NPU 原始帧上传到千问。
+NPU 输入图像只在 RV1106 本地使用；TCP 9010 发送归一化 bbox、置信度、frame_id、
+时间戳、临时 track_id 与值守状态，不发送原始图像。track_id 只表示连续帧关联，
+不是人脸身份。
 
-Qt 结果面板会显示 `场景=端侧NPU`、人数和检测摘要。普通人员出现只作为
-检测结果展示，状态保持正常；当前人形模型没有危险行为或禁区规则，不会仅因
-检测到人员触发告警。云端识别返回的告警结果仍按原规则显示。
+Qt 的事件区域显示当前人数、track 数和事件状态；高频本地检测不会覆盖刚返回的
+云端场景与摘要。普通人员出现只表示检测成立，当前人形模型没有危险行为或禁区
+规则，不会仅因检测到人员触发告警。
 
 ### NPU 本地值守
 
@@ -209,7 +210,14 @@ Qt 结果面板会显示 `场景=端侧NPU`、人数和检测摘要。普通人�
 NPU_WAKE_HITS=3
 NPU_IDLE_SECONDS=30
 NPU_BACKLIGHT_PATH=/sys/class/backlight/backlight/bl_power
+TRACK_IOU_THRESHOLD=0.3
+TRACK_MAX_MISSED=4
+TRACK_MIN_HITS=3
 ```
+
+只有达到 `TRACK_MIN_HITS` 的 confirmed track 才参与上报和背光判定。网络断开时
+TCP 建连/发送保持非阻塞，本地推理与背光不会被 ROCK 2A 拖住。检测框从模型的
+320x320 letterbox 坐标去除 padding 后反算为 384x216 的 0..1 坐标。
 
 ### 板端运行（RV1106）
 
@@ -241,24 +249,23 @@ RV1106 不支持板端 Python 推理（lite2 只有 aarch64 包），一律使�
 `manual_recognize_server.py` 新增 `--backend cloud|local`（默认 cloud，
 可用环境变量 `AI_BACKEND` 覆盖）：
 
-- `cloud`：Qt 实时预览每 30 秒自动识别，暂停后由按钮手动识别，两者均调用千问。
+- `cloud`：事件服务自动识别最佳 RTSP 候选帧；暂停后按钮仍可手动识别冻结帧。
 - `local`：手动识别直接返回最新 NPU 检测结果，不调用云端。
 
 supervisor 启动命令中通过 `AI_BACKEND=local` 切换即可。local 模式返回的是
 `npu_latest.json` 中最近一次端侧检测结果；上传的冻结 JPEG 仍会与结果一起按
 `source=manual` 缓存和保存，但当前协议不保证 NPU 检测帧与冻结帧完全相同。
 
-无 Qt 的 headless 专项测试中，`watch_latest_image.py` 读取高频
-`npu_latest.json` 作为云端请求门控。智能终端日常运行由 Qt 根据值守状态每
-30 秒提交一次自动请求，暂停后只允许手动冻结帧请求。Qt 接收的是
-低频 `npu_display.json`，仅在人数或值守状态变化时更新，避免覆盖刚返回的云端
-识别结果。TCP 结果服务还为云端或手动结果保留 10 秒显示优先期。
+生产 `event` 模式由 ROCK 事件服务调度自动请求，Qt 的旧 30 秒周期默认关闭。
+仅回退测试时设置 `ENABLE_LEGACY_AUTO_RECOGNITION=1`。无 Qt 的 headless watcher
+仍可专项测试，但不得与事件云端调度或 Qt 兼容周期同时启用。
 
 NPU 检测程序使用独立构建目标，不会参与媒体发送程序链接：
 
 ```sh
 make       # 只构建媒体发送程序和脚本
 make npu   # 单独构建 out/npu_detect
+make tracker-test  # 主机侧纯 C IoU/tracker 测试
 ```
 
 ### 基准（2026-08-07，yolov5n 320 int8）

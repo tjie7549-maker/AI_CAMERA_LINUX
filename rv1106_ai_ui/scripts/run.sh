@@ -42,10 +42,16 @@ export QT_QPA_EVDEV_TOUCHSCREEN_PARAMETERS=/dev/input/event0
 
 cd "$APP_DIR" || exit 1
 
+if [ "${ENABLE_LEGACY_AUTO_RECOGNITION:-0}" = "1" ]; then
+    set -- --enable-legacy-auto-recognition "$@"
+fi
+
 exec ./rv1106_ai_ui \
     --server-ip "${SERVER_IP:-192.168.50.1}" \
     --server-port "${SERVER_PORT:-9000}" \
     --preview-shm "${PREVIEW_SHM:-/ai_cam_preview}" \
     --preview-timeout-ms "${PREVIEW_TIMEOUT_MS:-1000}" \
+    --recognize-url "${RECOGNIZE_URL:-http://192.168.50.1:9001/recognize}" \
+    --event-api-url "${EVENT_API_URL:-http://192.168.50.1:9011}" \
     --auto-recognition-interval-ms "${AUTO_RECOGNITION_INTERVAL_MS:-30000}" \
     "$@"

@@ -19,6 +19,7 @@ SENSITIVE_KEYS = {
     "secret",
     "qwen_api_key",
 }
+MAX_MESSAGE_BYTES = 64 * 1024
 
 
 def parse_args() -> argparse.Namespace:
@@ -28,7 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input", required=True, type=Path)
     parser.add_argument("--extra-input", action="append", type=Path, default=[],
                         help="additional result files to stream (repeatable)")
-    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--host", default="192.168.50.1")
     parser.add_argument("--port", type=int, default=9000)
     parser.add_argument("--poll-interval", type=float, default=0.25)
     parser.add_argument(
@@ -78,10 +79,14 @@ def load_message(path: Path) -> Optional[bytes]:
         return None
 
     clean_payload = sanitize(payload)
-    return (
+    message = (
         json.dumps(clean_payload, ensure_ascii=False, separators=(",", ":"))
         + "\n"
     ).encode("utf-8")
+    if len(message) > MAX_MESSAGE_BYTES:
+        print(f"Input error: {path} exceeds 64 KiB", file=sys.stderr, flush=True)
+        return None
+    return message
 
 
 def client_closed(client: socket.socket, timeout: float) -> bool:
@@ -148,6 +153,7 @@ def run_server(host: str, port: int, input_paths: list,
                 continue
             with client:
                 client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                client.settimeout(1.0)
                 serve_client(
                     client,
                     address,

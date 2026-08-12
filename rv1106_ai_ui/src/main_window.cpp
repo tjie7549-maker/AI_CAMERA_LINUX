@@ -39,11 +39,36 @@ void addResultField(QVBoxLayout *layout, const QString &caption,
     value->setMaximumHeight(maximumHeight);
     layout->addWidget(value);
 }
+
+QString eventStateText(const QString &state)
+{
+    if (state == QStringLiteral("active")) return QStringLiteral("进行中");
+    if (state == QStringLiteral("ending")) return QStringLiteral("等待结束");
+    if (state == QStringLiteral("ended")) return QStringLiteral("已结束");
+    if (state == QStringLiteral("interrupted")) return QStringLiteral("已中断");
+    return state.isEmpty() ? QStringLiteral("无事件") : state;
+}
+
+QString cloudStateText(const QString &state)
+{
+    if (state == QStringLiteral("pending")) return QStringLiteral("等待");
+    if (state == QStringLiteral("running")) return QStringLiteral("识别中");
+    if (state == QStringLiteral("complete")) return QStringLiteral("已完成");
+    if (state == QStringLiteral("failed")) return QStringLiteral("失败");
+    return state.isEmpty() ? QStringLiteral("未请求") : state;
+}
+
+QString shortEventId(const QString &eventId)
+{
+    if (eventId.size() <= 22) return eventId;
+    return eventId.left(10) + QStringLiteral("…") + eventId.right(7);
+}
 } // namespace
 
 MainWindow::MainWindow(ManualRecognitionClient *manualClient,
                        ResultStorageClient *storageClient,
-                       int autoRecognitionIntervalMs, QWidget *parent)
+                       int autoRecognitionIntervalMs,
+                       bool legacyAutoRecognitionEnabled, QWidget *parent)
     : QWidget(parent),
       clockLabel_(nullptr),
       videoStatusLabel_(nullptr),
@@ -63,6 +88,7 @@ MainWindow::MainWindow(ManualRecognitionClient *manualClient,
       warningValue_(nullptr),
       warningReasonValue_(nullptr),
       summaryValue_(nullptr),
+      eventValue_(nullptr),
       latencyValue_(nullptr),
       totalTokensValue_(nullptr),
       inputTokensValue_(nullptr),
@@ -73,6 +99,7 @@ MainWindow::MainWindow(ManualRecognitionClient *manualClient,
       clockTimer_(new QTimer(this)),
       autoRecognitionTimer_(new QTimer(this)),
       autoRecognitionIntervalMs_(autoRecognitionIntervalMs),
+      legacyAutoRecognitionEnabled_(legacyAutoRecognitionEnabled),
       previewUiState_(PreviewUiState::Live),
       previewStreamState_(0),
       sentinelActive_(false),
@@ -97,6 +124,8 @@ MainWindow::MainWindow(ManualRecognitionClient *manualClient,
     autoRecognitionTimer_->setInterval(autoRecognitionIntervalMs_);
     connect(autoRecognitionTimer_, &QTimer::timeout,
             this, &MainWindow::onAutoRecognitionTimeout);
+    connect(storageClient_, &ResultStorageClient::activeEventRecovered,
+            this, &MainWindow::onActiveEventRecovered);
     updateCurrentTime();
 }
 
@@ -199,7 +228,11 @@ void MainWindow::buildUi()
     saveResultButton_->setEnabled(false);
     saveResultButton_->setFocusPolicy(Qt::NoFocus);
     connect(saveResultButton_, &QPushButton::clicked, this, [this]() {
-        if (storageClient_ && storageClient_->save(saveSource_, saveRequestId_)) {
+        const bool started = storageClient_ &&
+            (!currentEventId_.isEmpty()
+                 ? storageClient_->saveEvent(currentEventId_)
+                 : storageClient_->save(saveSource_, saveRequestId_));
+        if (started) {
             saveResultButton_->setText(QStringLiteral("保存中…"));
             saveResultButton_->setEnabled(false);
         }
@@ -253,12 +286,14 @@ void MainWindow::buildUi()
     warningValue_ = makeLabel(QString(), QStringLiteral("alertValue"), resultPanel);
     warningReasonValue_ = makeLabel(QString(), QStringLiteral("fieldValue"), resultPanel);
     summaryValue_ = makeLabel(QString(), QStringLiteral("summaryValue"), resultPanel);
-    addResultField(resultLayout, QStringLiteral("场景"), sceneValue_, 42);
-    addResultField(resultLayout, QStringLiteral("人数"), peopleValue_, 30);
-    addResultField(resultLayout, QStringLiteral("物体"), objectsValue_, 54);
-    addResultField(resultLayout, QStringLiteral("告警"), warningValue_, 30);
-    addResultField(resultLayout, QStringLiteral("原因"), warningReasonValue_, 48);
-    addResultField(resultLayout, QStringLiteral("摘要"), summaryValue_, 72);
+    eventValue_ = makeLabel(QString(), QStringLiteral("eventValue"), resultPanel);
+    addResultField(resultLayout, QStringLiteral("当前事件"), eventValue_, 52);
+    addResultField(resultLayout, QStringLiteral("场景"), sceneValue_, 34);
+    addResultField(resultLayout, QStringLiteral("人数"), peopleValue_, 26);
+    addResultField(resultLayout, QStringLiteral("物体"), objectsValue_, 36);
+    addResultField(resultLayout, QStringLiteral("告警"), warningValue_, 26);
+    addResultField(resultLayout, QStringLiteral("原因"), warningReasonValue_, 34);
+    addResultField(resultLayout, QStringLiteral("摘要"), summaryValue_, 52);
     resultLayout->addStretch();
     middleLayout->addWidget(resultPanel);
     rootLayout->addLayout(middleLayout);
@@ -320,6 +355,7 @@ void MainWindow::showDefaultState()
     objectsValue_->setText(QStringLiteral("无"));
     warningReasonValue_->setText(QStringLiteral("-"));
     summaryValue_->setText(result.summary);
+    eventValue_->setText(QStringLiteral("无活动事件"));
     modelLabel_->setText(QStringLiteral("模型  %1").arg(result.model));
     latencyValue_->setText(QStringLiteral("-- ms"));
     totalTokensValue_->setText(QStringLiteral("0"));
@@ -344,6 +380,14 @@ void MainWindow::updateAiResult(const AiResult &result)
         sentinelActive_ = result.sentinelActive;
         updateAutoRecognitionTimer();
     }
+    if (result.messageType.startsWith(QStringLiteral("event."))) {
+        applyEventResult(result);
+        return;
+    }
+    if (result.messageType == QStringLiteral("health")) {
+        updateError(QStringLiteral("事件服务报告检测链路异常"));
+        return;
+    }
     if (result.source == QStringLiteral("manual")) {
         if (result.requestId.isEmpty() || result.requestId == lastAppliedRequestId_ ||
             result.requestId != activeRequestId_ || result.frameId != activeRequestFrameId_) {
@@ -352,6 +396,8 @@ void MainWindow::updateAiResult(const AiResult &result)
         applyManualResult(result, result.serverLatencyMs);
         return;
     }
+    if (result.source == QStringLiteral("local"))
+        return;
     if (previewUiState_ != PreviewUiState::Live)
         return;
     if ((result.source == QStringLiteral("auto") || result.source == QStringLiteral("manual")) &&
@@ -401,6 +447,8 @@ void MainWindow::updateConnectionState(const QString &state)
     if (state == QStringLiteral("Connected")) {
         visualState = QStringLiteral("online");
         displayState = QStringLiteral("已连接");
+        if (storageClient_)
+            storageClient_->recoverActiveEvent();
     } else if (state == QStringLiteral("Connecting")) {
         visualState = QStringLiteral("waiting");
         displayState = QStringLiteral("连接中");
@@ -545,7 +593,7 @@ void MainWindow::onAutoRecognitionTimeout()
 
 void MainWindow::updateAutoRecognitionTimer()
 {
-    const bool shouldRun = sentinelActive_ &&
+    const bool shouldRun = legacyAutoRecognitionEnabled_ && sentinelActive_ &&
                            previewUiState_ == PreviewUiState::Live &&
                            previewStreamState_ == 2;
     if (shouldRun) {
@@ -554,6 +602,61 @@ void MainWindow::updateAutoRecognitionTimer()
     } else {
         autoRecognitionTimer_->stop();
     }
+}
+
+void MainWindow::applyEventResult(const AiResult &result)
+{
+    if (result.eventId.isEmpty())
+        return;
+    currentEventId_ = result.eventId;
+    currentEventState_ = result.eventState;
+    eventValue_->setText(
+        QStringLiteral("%1  %2\n人数 %3/%4  跟踪 %5  %6秒\n云端 %7  最佳帧 %8")
+            .arg(shortEventId(result.eventId), eventStateText(result.eventState))
+            .arg(result.currentPeople)
+            .arg(result.maxPeople)
+            .arg(result.trackCount)
+            .arg(result.durationMs / 1000)
+            .arg(cloudStateText(result.cloudState))
+            .arg(result.bestFrameId));
+    peopleValue_->setText(QString::number(result.currentPeople));
+    if (!result.summary.isEmpty() &&
+        result.summary != QStringLiteral("暂无识别结果")) {
+        summaryValue_->setText(result.summary);
+        warningReasonValue_->setText(result.warning
+                                         ? result.warningReason
+                                         : QStringLiteral("-"));
+        setStateLabel(warningValue_, result.warning ? QStringLiteral("告警")
+                                                    : QStringLiteral("正常"),
+                      result.warning ? QStringLiteral("warning")
+                                     : QStringLiteral("normal"));
+    }
+    saveSource_ = QStringLiteral("event");
+    saveRequestId_ = result.eventId;
+    saveResultButton_->setText(QStringLiteral("保存事件"));
+    saveResultButton_->setEnabled(result.bestFrameId > 0 &&
+                                  storageClient_ && !storageClient_->isBusy());
+}
+
+void MainWindow::onActiveEventRecovered(const QJsonObject &event)
+{
+    AiResult result;
+    result.schemaVersion = 1;
+    result.messageType = QStringLiteral("event.update");
+    result.eventId = event.value(QStringLiteral("event_id")).toString();
+    result.eventState = event.value(QStringLiteral("state")).toString();
+    result.currentPeople = event.value(QStringLiteral("current_people")).toInt();
+    result.maxPeople = event.value(QStringLiteral("max_people")).toInt();
+    result.trackCount = event.value(QStringLiteral("track_count")).toInt();
+    result.durationMs = static_cast<qint64>(
+        event.value(QStringLiteral("duration_ms")).toDouble());
+    result.bestFrameId = static_cast<quint64>(
+        event.value(QStringLiteral("best_frame_id")).toDouble());
+    result.cloudState = event.value(QStringLiteral("cloud_state")).toString();
+    result.summary = event.value(QStringLiteral("summary")).toString();
+    result.warning = event.value(QStringLiteral("warning")).toBool(false);
+    result.warningReason = event.value(QStringLiteral("warning_reason")).toString();
+    applyEventResult(result);
 }
 
 void MainWindow::onRecognitionRequestStarted(const QString &source,
@@ -702,7 +805,9 @@ void MainWindow::applyManualResult(const AiResult &result, qint64 totalElapsedMs
     lastAppliedRequestId_ = result.requestId;
     saveSource_ = result.source;
     saveRequestId_ = result.requestId;
-    saveResultButton_->setText(QStringLiteral("保存结果"));
+    saveResultButton_->setText(currentEventId_.isEmpty()
+                                   ? QStringLiteral("保存结果")
+                                   : QStringLiteral("保存事件"));
     saveResultButton_->setEnabled(saveSource_ == QStringLiteral("manual") ||
                                   saveSource_ == QStringLiteral("auto"));
     sceneValue_->setText(result.scene);

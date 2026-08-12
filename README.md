@@ -3,11 +3,11 @@
 RV1106 摄像头发送端与 ROCK 2A 接收、视觉识别端的单仓库工程。
 
 ```text
-SC3336 -> RV1106 ISP/VI/VPSS/VENC -> H.264 RTSP
-                                      |
-                                      `-> ROCK 2A FFmpeg -> RGB24/JPEG -> Qwen Vision
-                                                                 |                 |
-                                          RV1106 Qt UI <- TCP JSON      保存图片/结果/元数据
+SC3336 -> RV1106 ISP/VI/VPSS/VENC -> H.264 RTSP -> ROCK 2A JPEG ring
+                    |                                      |
+                    `-> RKNN bbox + IoU track -> event engine -> Qwen Vision
+                                                   |              |
+                                  RV1106 Qt UI <- TCP JSON   SQLite + 最佳图
 ```
 
 ## 目录
@@ -16,7 +16,7 @@ SC3336 -> RV1106 ISP/VI/VPSS/VENC -> H.264 RTSP
 rv1106_sender/     Luckfox Pico RV1106：LCD 预览、H.264 双码流与 RTSP 服务
 rock2a_receiver/   ROCK 2A：RTSP 解码、JPEG 抽帧、latest.jpg 与千问视觉识别
 rv1106_ai_ui/      RV1106：720x720 Qt 中文界面与 AI JSON TCP 客户端
-docs/               架构和联调说明
+docs/               架构、事件模型/API、迁移和测试说明
 ```
 
 ## 当前网络
@@ -52,11 +52,12 @@ rtsp://192.168.50.2:554/live/1   子码流 640x360，20 FPS
 │ ROCK 2A（接收/识别端）                                                             │
 │ systemd ai-camera.service -> ROCK Supervisor（唯一重启决策层）                    │
 │   ├─ RTSP 接收器（FFmpeg 解码） -> runtime/ai_cam/latest.jpg                     │
-│   ├─ NPU 值守状态（TCP 9010）：只传人数与唤醒状态                                  │
-│   ├─ HTTP 9001：Qt 每 30 秒自动识别 / 暂停帧手动识别 / 保存                        │
+│   ├─ NPU track（TCP 9010）-> event service（HTTP 9011）-> SQLite                  │
+│   ├─ 24 张 JPEG ring -> 最佳帧 -> 事件驱动云端识别                                │
+│   ├─ HTTP 9001：暂停帧手动识别与旧结果保存                                         │
 │   ├─ watcher：仅供无 Qt 的 headless 专项测试                                      │
 │   ├─ TCP 9000：结果回传 -> RV1106 Qt 显示                                          │
-│   └─ 自动保存策略 none/warning/all + 60s 去重 -> saved_results/{manual,auto}      │
+│   └─ 保存：events/<event_id>；兼容 saved_results/{manual,auto}                    │
 └────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -114,10 +115,10 @@ rtsp://192.168.50.2:554/live/1   子码流 640x360，20 FPS
 
 - 摄像头、RTSP、Qt 和 NPU 始终运行，只关闭 LCD 背光，不反复初始化媒体管线；
 - 连续检测到人员 3 次后立即点亮背光；连续无人 30 秒后关闭背光；
-- NPU 只在 RV1106 本地处理预览帧，向 ROCK 2A 发送人数与值守状态，不把
-  NPU 输入图像上传云端；
-- 值守 active 且界面处于实时预览时，Qt 每 30 秒上传一张当前帧调用千问；
-- 点击“暂停”立即停止新的自动周期，之后仅由“识别”按钮提交冻结帧；
+- NPU 只在 RV1106 本地处理预览帧，向 ROCK 2A 发送归一化人形框、临时 track_id
+  和值守状态，不上传 NPU 输入图像；
+- ROCK 2A 按对象事件选择 RTSP 最佳帧并低频调用千问，Qt 不再负责生产环境定时调度；
+- 点击“暂停”后仍可由“识别”按钮提交精确冻结帧；
 - NPU 退出时恢复背光，避免服务停止后 LCD 保持黑屏。
 
 ## 构建与运行
@@ -183,18 +184,14 @@ cd /home/radxa/AI_CAMERA_LINUX/rock2a_receiver
 # 2) 编译接收器
 cmake --build build -j"$(nproc)"
 
-# 3) 安装 systemd 服务与配置
+# 3) 安装 systemd 服务与统一配置
 sudo cp systemd/ai-camera.service /etc/systemd/system/
-sudo tee /etc/ai-camera.env <<'EOF'
-AI_CAMERA_AUTO_SAVE_POLICY=warning
-AI_CAMERA_AUTO_SAVE_DEDUP_SECONDS=60
-AI_CAMERA_MIN_FREE_MB=1024
-EOF
+sudo install -m 0644 config/ai-camera.example.env /etc/ai-camera.env
 sudo systemctl daemon-reload
 sudo systemctl enable --now ai-camera.service
 
-# 4) 模式文件（智能终端推荐 manual；由 Qt 统一调度自动与手动识别）
-echo manual > /home/radxa/.config/ai_cam/mode
+# 4) 模式文件（智能终端推荐 event；自动识别由事件服务调度）
+echo event > /home/radxa/.config/ai_cam/mode
 
 # 5) API Key（不进入仓库/systemd）
 /home/radxa/.config/ai_cam/qwen.env
@@ -216,8 +213,8 @@ sudo systemctl restart ai-camera   # 重启
 systemctl status ai-camera         # 状态
 ```
 
-端口：RV1106 `554`（RTSP）；ROCK 2A `9000`（TCP 回传）、`9001`（HTTP 自动/手动
-识别与保存）、`9010`（NPU 值守元数据）。
+端口：RV1106 `554`（RTSP）；ROCK 2A `9000`（TCP 回传）、`9001`（手动识别/旧保存）、
+`9010`（NPU track 元数据）、`9011`（事件 API/metrics）。服务默认绑定有线地址。
 
 ### 故障恢复手册
 
@@ -281,10 +278,10 @@ ROCK 2A： rock2a_receiver/runtime/logs/{supervisor,rtsp_receiver,manual_server,
 
 Qt 界面以 16:9 显示 DMA-BUF 实时预览，提供以下触摸操作：
 
-1. NPU 检测到人员后唤醒 LCD；实时预览期间每 30 秒自动识别一次。
-2. 点击“暂停”停止自动识别并冻结当前显示帧；按钮变为“继续”。
+1. NPU confirmed track 唤醒 LCD；ROCK 2A 以事件策略低频识别最佳帧。
+2. 点击“暂停”冻结当前显示帧；按钮变为“继续”，后台事件仍独立运行。
 3. 点击“识别”，将冻结帧 JPEG 发送至 ROCK 2A；完成后显示中文结果与延迟。
-4. 点击“保存结果”，ROCK 2A 按来源保存该次精确 JPEG、完整 JSON 与元数据；同一 `request_id` 重复保存不会产生副本。
+4. 点击“保存结果”优先保存当前 `event_id`；没有事件时回退保存手动 `request_id`，重复保存不产生副本。
 5. 点击“退出”后，3 秒内再次点击“确认退出”，由监督脚本依次正常停止 Qt、摄像头和联动 AI 管线。
 
 保存文件仅存储在 ROCK 2A：
@@ -292,7 +289,11 @@ Qt 界面以 16:9 显示 DMA-BUF 实时预览，提供以下触摸操作：
 ```text
 /home/radxa/AI_CAMERA_LINUX/rock2a_receiver/runtime/saved_results/manual/
 /home/radxa/AI_CAMERA_LINUX/rock2a_receiver/runtime/saved_results/auto/
+/home/radxa/AI_CAMERA_LINUX/rock2a_receiver/runtime/ai_cam/saved_results/events/
 ```
+
+对象事件设计见 [docs/event-model.md](docs/event-model.md)，接口见
+[docs/event-api.md](docs/event-api.md)。硬件无关回归统一执行 `./scripts/test.sh`。
 
 ## 仓库规则
 

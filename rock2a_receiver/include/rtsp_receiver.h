@@ -26,6 +26,9 @@ public:
         int snapshot_interval_ms = 1000;
         std::string latest_image_path;
         int latest_interval_ms = 3000;
+        std::string frame_cache_dir;
+        int frame_cache_interval_ms = 500;
+        int frame_cache_max = 24;
         int open_timeout_ms = 5000;
         int read_timeout_ms = 5000;
         int duration_seconds = 0;
@@ -50,6 +53,7 @@ private:
     bool processDecodedFrame(AVFrame* frame);
     bool saveSnapshot(const AVFrame* rgb_frame);
     bool updateLatestImage(const AVFrame* rgb_frame);
+    bool saveFrameCache(const AVFrame* rgb_frame);
     bool encodeAndWriteJpeg(const AVFrame* rgb_frame,
                             const std::string& image_path,
                             bool atomic_replace);
@@ -92,6 +96,9 @@ private:
     bool has_snapshot_time_ = false;
     std::chrono::steady_clock::time_point last_latest_image_{};
     bool has_latest_image_time_ = false;
+    std::chrono::steady_clock::time_point last_frame_cache_{};
+    bool has_frame_cache_time_ = false;
+    std::vector<std::uint8_t> last_frame_signature_;
     std::uint64_t compressed_packets_ = 0;
     std::uint64_t decoded_frames_ = 0;
     std::uint64_t decoded_frames_at_last_stats_ = 0;

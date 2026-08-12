@@ -1,6 +1,7 @@
 qwen.env
 .env
 *.env
+!config/*.example.env
 .venv-qwen/
 __pycache__/
 *.pyc

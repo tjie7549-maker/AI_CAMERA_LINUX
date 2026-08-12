@@ -1,6 +1,7 @@
 # ROCK 2A RTSP 接收与千问视觉识别
 
-本工程运行在 ROCK 2A，接收 RV1106 的 H.264 子码流，解码为 RGB24，定时保存 JPEG，并以低频、独立的 Python 进程调用千问视觉模型。
+本工程运行在 ROCK 2A，接收 RV1106 的 H.264 子码流和 NPU track 元数据，维护
+对象事件、选择最佳帧、按事件策略调用千问，并用 SQLite/文件系统持久化。
 
 ```text
 RV1106 /live/1
@@ -8,10 +9,9 @@ RV1106 /live/1
   -> libavformat + libavcodec
   -> yuvj420p AVFrame
   -> libswscale RGB24
-  -> JPEG / latest.jpg
-  -> Qwen Vision API
-  -> latest_result.json
-  -> TCP 0.0.0.0:9000
+  -> bounded JPEG ring -> event best image
+  -> event engine -> SQLite -> Qwen Vision API
+  -> event/recognition NDJSON -> TCP 192.168.50.1:9000
   -> RV1106 Qt UI
 ```
 
@@ -33,9 +33,15 @@ rock2a_receiver/
 ├── src/                    C++ RTSP 接收、解码与 JPEG 写入
 ├── include/                C++ 头文件
 ├── tools/qwen_vision/      千问视觉 Python 模块
+├── tests/                  无硬件事件/数据库/HTTP 测试
+├── config/                 supervisor 配置示例
 ├── build/                  CMake 编译产物
 ├── artifacts/frames/       历史和后续测试图片
 ├── runtime/ai_cam/         最新图片、识别结果与运行日志
+│   ├── events.db           SQLite 事件库
+│   ├── frame_ring/         最近 24 张 RTSP 候选图
+│   ├── event_best/         每个事件的稳定最佳图
+│   └── saved_results/events/  用户保存的事件
 ├── runtime/result_cache/   按 auto/manual 缓存的精确识别输入与结果
 ├── runtime/saved_results/  用户确认保存的图片、JSON、元数据与索引
 ├── run_ai_monitor.sh       一键接收与识别脚本
@@ -96,9 +102,9 @@ cd /home/radxa/AI_CAMERA_LINUX/rock2a_receiver
 ./run_linked_ai_camera.sh
 ```
 
-默认的 `manual` 是 ROCK 2A 进程编排模式：启动 HTTP 9001，由 Qt 统一调度实时画面的
-30 秒自动识别和暂停帧手动识别。它不是“只能手动识别”。不要再同时启动 headless
-watcher，否则会产生两套自动云端请求。
+默认 `event` 模式启动 RTSP receiver、事件服务、NPU receiver、HTTP 9001 和 TCP
+sender。自动云端识别由事件状态变化驱动，Qt 固定 30 秒周期默认关闭；暂停帧手动
+识别保持不变。不要同时启动 headless watcher 或 Qt 兼容周期，以免重复调用。
 
 该脚本不存储 RV1106 登录密码。首次部署后，ROCK 2A 的 `~/.ssh/config` 中需要存在
 `rv1106-ai-camera` 主机别名。
@@ -109,19 +115,20 @@ watcher，否则会产生两套自动云端请求。
 
 ```sh
 cd /home/radxa/AI_CAMERA_LINUX/rock2a_receiver
-./run_manual_ai_pipeline.sh
+AI_CAMERA_MODE=event ./run_rock2a_supervisor.sh
 ```
 
 该脚本持续运行到 Ctrl+C，并完成：
 
-1. 接收 `rtsp://192.168.50.2:554/live/1`。
-2. 监听 `0.0.0.0:9001`，接收 Qt 发来的实时帧或暂停帧。
-3. 实时预览且 NPU 值守 active 时，由 Qt 每 30 秒提交一次 `source=auto` 请求。
-4. 点击暂停后停止自动周期，只接收冻结帧 `source=manual` 请求。
-5. 监听 `0.0.0.0:9000`，将 NPU 状态与最新识别 JSON 回传 Qt。
-6. Ctrl+C 时正常停止接收器、HTTP 服务、NPU 状态服务和 TCP 服务。
+1. 接收 `rtsp://192.168.50.2:554/live/1` 并维护 500 ms/24 张候选环。
+2. 在 `192.168.50.1:9010` 接收 bbox/track 元数据。
+3. 创建和结束事件，SQLite 落盘，并按 3/120/300 秒策略调用云端。
+4. `192.168.50.1:9001` 保留冻结帧手动识别。
+5. `192.168.50.1:9000` 回传事件和识别结果，`9011` 提供 API/metrics。
+6. Ctrl+C 时由 supervisor 正常停止全部组件。
 
-值守状态文件为 `runtime/ai_cam/npu_latest.json`；Qt 使用低频
+统一 track 状态文件为 `runtime/ai_cam/npu_latest.json`，其中保留 schema、bbox、
+track 和时间戳，并补充旧消费者需要的值守字段；Qt 使用低频
 `runtime/ai_cam/npu_display.json`。NPU 原始帧不上传云端；人员离开并达到 RV1106
 无人超时后，Qt 收到 idle 状态并停止新的自动请求。
 云端或手动结果发送后具有 10 秒显示优先期，期间 NPU 展示更新不会覆盖结果。
@@ -159,6 +166,14 @@ cd /home/radxa/AI_CAMERA_LINUX/rock2a_receiver
 最新识别结果：
 /home/radxa/AI_CAMERA_LINUX/rock2a_receiver/runtime/ai_cam/latest_result.json
 
+最新事件 / 最新事件识别：
+/home/radxa/AI_CAMERA_LINUX/rock2a_receiver/runtime/ai_cam/event_latest.json
+/home/radxa/AI_CAMERA_LINUX/rock2a_receiver/runtime/ai_cam/event_recognition_latest.json
+
+事件数据库 / 最佳图：
+/home/radxa/AI_CAMERA_LINUX/rock2a_receiver/runtime/ai_cam/events.db
+/home/radxa/AI_CAMERA_LINUX/rock2a_receiver/runtime/ai_cam/event_best/
+
 C++ 接收日志：
 /home/radxa/AI_CAMERA_LINUX/rock2a_receiver/runtime/ai_cam/receiver.log
 
@@ -178,7 +193,8 @@ python3 -m json.tool \
 
 ## 交互识别与保存结果服务
 
-`run_manual_ai_pipeline.sh` 除 TCP 结果服务外，还监听 `0.0.0.0:9001`：
+兼容脚本 `run_manual_ai_pipeline.sh` 仍提供旧手动链路，并默认绑定
+`192.168.50.1:9001`：
 
 ```text
 POST /recognize    接收 RV1106 实时帧或暂停帧 JPEG 并返回识别 JSON
@@ -203,10 +219,24 @@ runtime/saved_results/<auto|manual>/<YYYY-MM-DD>/<HHMMSS_request_id>/
 其中包含精确上传图片、完整识别 JSON 和元数据；`index.jsonl` 使用文件锁维护幂等索引，
 同一来源和请求 ID 不会重复保存。缓存最多保留 100 条，并清理 24 小时前的记录。
 
-Qt 通过 `X-Recognition-Source: auto|manual` 区分来源。实时且 NPU 值守 active 时
-每 30 秒发送一次 `auto` 请求；点击暂停后停止周期，只允许冻结帧 `manual` 请求。
-日常智能终端应运行 `run_manual_ai_pipeline.sh`（或 systemd 的 `manual` 模式），
-避免再同时启动旧的 headless watcher 而产生重复云端请求。
+Qt 通过 `X-Recognition-Source: auto|manual` 区分旧来源。生产事件模式下只保留
+冻结帧 `manual` 请求；设置 `ENABLE_LEGACY_AUTO_RECOGNITION=1` 才恢复旧 `auto`
+周期。当前事件保存到 `runtime/ai_cam/saved_results/events/<event_id>/`。
+
+## 事件服务
+
+`event_service.py` 默认监听 `192.168.50.1:9011`，提供 `/health`、`/events`、
+`/events/<id>`、`/events/<id>/image`、`/events/<id>/save` 和 `/metrics`。消息体
+限制 64 KiB，ID 严格校验；最佳帧与 NPU 帧仅按时间近似匹配并明确标记
+`frame_match=approximate`。完整接口见 `../docs/event-api.md`。
+
+配置模板位于 `config/ai-camera.example.env`。部署时可复制为
+`/etc/ai-camera.env`，systemd 和手动启动的 supervisor 都会读取同一份配置。
+也可以通过 `AI_CAMERA_CONFIG_FILE` 指定其他绝对路径。推荐把模式文件写为：
+
+```sh
+echo event > /home/radxa/.config/ai_cam/mode
+```
 
 ## 手动运行
 
@@ -239,12 +269,13 @@ cd /home/radxa/AI_CAMERA_LINUX/rock2a_receiver
 
 - C++ 接收端只负责 RTSP、H.264 解码、RGB24 转换和 JPEG 写入。
 - 千问调用在独立 Python 进程中执行，不会阻塞 FFmpeg 解码线程。
-- Python 只处理更新后的最新图片；旧图片可丢弃，不会积压请求。
+- RTSP 候选环严格限制为 24 张，事件候选缓存限制为 32 张；最佳图另行提升保存。
+- 事件云端请求单事件串行、有限重试，云端失败不影响事件结束。
 - API 失败仅写入失败结果，不会停止视频接收。
 - 当前版本不自动重连 RTSP；服务恢复后重新启动接收程序即可。RTSP 建连失败会停止
   Python 监控并在终端显示接收日志，不会停留在等待识别结果的状态。
 
-## 已验证结果
+## 历史媒体链路验证结果
 
 ```text
 RTSP 十分钟测试：600 秒，12027 帧，约 20 FPS，读帧/解码错误均为 0。

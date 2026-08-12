@@ -173,6 +173,18 @@ bool AiResultClient::parseMessage(const QByteArray &message, AiResult &result,
     }
 
     const QJsonObject root = document.object();
+    result.schemaVersion = jsonInt(root, QStringLiteral("schema_version"), 0);
+    if (result.schemaVersion != 0 && result.schemaVersion != 1) {
+        error = QStringLiteral("unsupported schema_version");
+        return false;
+    }
+    result.messageType = jsonString(root, QStringLiteral("message_type"), QString());
+    result.cameraId = jsonString(root, QStringLiteral("camera_id"), QString());
+    if (result.schemaVersion == 1 &&
+        (result.messageType.isEmpty() || result.cameraId.isEmpty())) {
+        error = QStringLiteral("versioned message lacks type or camera_id");
+        return false;
+    }
     result.timestamp = jsonString(root, QStringLiteral("timestamp"), result.timestamp);
     result.model = jsonString(root, QStringLiteral("model"), result.model);
     result.success = root.value(QStringLiteral("success")).toBool(false);
@@ -185,6 +197,7 @@ bool AiResultClient::parseMessage(const QByteArray &message, AiResult &result,
     result.type = jsonString(root, QStringLiteral("type"), QString());
     result.source = jsonString(root, QStringLiteral("source"), QString());
     result.requestId = jsonString(root, QStringLiteral("request_id"), QString());
+    result.eventId = jsonString(root, QStringLiteral("event_id"), QString());
     if (root.value(QStringLiteral("frame_id")).isDouble())
         result.frameId = static_cast<quint64>(root.value(QStringLiteral("frame_id")).toDouble());
     if (root.value(QStringLiteral("frame_timestamp_ns")).isDouble())
@@ -196,6 +209,9 @@ bool AiResultClient::parseMessage(const QByteArray &message, AiResult &result,
     if (root.value(QStringLiteral("latency_ms")).isDouble())
         result.latencyMs = static_cast<qint64>(
             root.value(QStringLiteral("latency_ms")).toDouble());
+    if (root.value(QStringLiteral("captured_at_ms")).isDouble())
+        result.capturedAtMs = static_cast<qint64>(
+            root.value(QStringLiteral("captured_at_ms")).toDouble());
 
     const QJsonObject usage = root.value(QStringLiteral("usage")).toObject();
     result.inputTokens = jsonInt(usage, QStringLiteral("input_tokens"), 0);
@@ -205,7 +221,23 @@ bool AiResultClient::parseMessage(const QByteArray &message, AiResult &result,
 
     const QJsonObject resultObject = root.value(QStringLiteral("result")).toObject();
     result.scene = jsonString(resultObject, QStringLiteral("scene"), result.scene);
-    result.peopleCount = jsonInt(resultObject, QStringLiteral("people_count"), 0);
+    result.currentPeople = jsonInt(resultObject, QStringLiteral("current_people"), 0);
+    result.maxPeople = jsonInt(resultObject, QStringLiteral("max_people"),
+                               result.currentPeople);
+    result.trackCount = jsonInt(resultObject, QStringLiteral("track_count"), 0);
+    result.durationMs = static_cast<qint64>(
+        resultObject.value(QStringLiteral("duration_ms")).toDouble(0));
+    result.bestFrameId = static_cast<quint64>(
+        resultObject.value(QStringLiteral("best_frame_id")).toDouble(0));
+    result.eventState = jsonString(resultObject, QStringLiteral("event_state"),
+                                   QString());
+    result.cloudState = jsonString(resultObject, QStringLiteral("cloud_state"),
+                                   QString());
+    result.frameMatch = jsonString(resultObject, QStringLiteral("frame_match"),
+                                   jsonString(root, QStringLiteral("frame_match"),
+                                              QString()));
+    result.peopleCount = jsonInt(resultObject, QStringLiteral("people_count"),
+                                 result.currentPeople);
     result.warning = resultObject.value(QStringLiteral("warning")).toBool(false);
     result.warningReason = jsonString(resultObject,
                                       QStringLiteral("warning_reason"),

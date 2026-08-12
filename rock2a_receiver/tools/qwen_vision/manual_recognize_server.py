@@ -145,9 +145,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
             document: dict[str, Any] = {
                 **npu_document,
+                "message_type": "recognition.result",
                 "type": request_source + "_result",
                 "source": request_source,
                 "recognition_backend": "local",
+                "frame_match": "approximate",
                 "request_id": request_id,
                 "frame_id": frame_id,
                 "frame_timestamp_ns": timestamp_ns,
@@ -259,7 +261,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Serve RV1106 interactive recognition requests.")
-    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--host", default="192.168.50.1")
     parser.add_argument("--port", type=int, default=9001)
     parser.add_argument("--max-image-bytes", type=int, default=1048576)
     parser.add_argument("--result-path", type=Path, default=Path("/tmp/ai_cam/latest_result.json"))

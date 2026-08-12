@@ -30,3 +30,14 @@ python tools/qwen_vision/watch_latest_image.py \
 ```
 
 `latest_result.json` 也使用同目录临时文件写完、`fsync` 后再 `rename` 的方式更新。
+
+生产智能终端不再使用固定间隔 watcher，而由以下轻量模块组成事件路径：
+
+```text
+npu_result_server.py -> event_protocol.py -> event_engine.py
+  -> frame_cache.py + event_store.py -> event_service.py
+```
+
+`event_service.py` 按事件变化和冷却策略调用同一个 `QwenVisionClient`。watcher 仅保留
+为无 Qt 兼容测试入口，不能与事件云端调度同时启用。接口和配置见仓库
+`docs/event-api.md`、`docs/event-model.md`。
