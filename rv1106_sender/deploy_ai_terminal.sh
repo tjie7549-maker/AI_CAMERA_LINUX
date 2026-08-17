@@ -31,11 +31,13 @@ scp "$SENDER_BIN" \
     "$TARGET:$TARGET_DIR/rv1106_sender/"
 scp "$SENDER_DIR/run_ai_terminal.sh" "$TARGET:$TARGET_DIR/"
 scp "$SENDER_DIR/run_rv1106_supervisor.sh" "$TARGET:$TARGET_DIR/"
+scp "$SENDER_DIR/ai-camera-autostart.sh" "$TARGET:$TARGET_DIR/"
 scp "$UI_BIN" "$UI_DIR/scripts/run.sh" "$TARGET:$TARGET_DIR/rv1106_ai_ui/"
 scp "$FONT" "$TARGET:$TARGET_DIR/rv1106_ai_ui/fonts/"
 scp "$SENDER_DIR/S20ai-camera-userdata" "$TARGET:$OEM_INIT_DIR/"
+scp "$SENDER_DIR/S95ai-camera-disabled" "$TARGET:$OEM_INIT_DIR/"
 
-ssh "$TARGET" "chmod +x '$TARGET_DIR/run_ai_terminal.sh' '$TARGET_DIR/run_rv1106_supervisor.sh' '$TARGET_DIR/rv1106_sender/'* '$TARGET_DIR/rv1106_ai_ui/'* '$OEM_INIT_DIR/S20ai-camera-userdata'; '$OEM_INIT_DIR/S20ai-camera-userdata' start"
+ssh "$TARGET" "chmod +x '$TARGET_DIR/run_ai_terminal.sh' '$TARGET_DIR/run_rv1106_supervisor.sh' '$TARGET_DIR/ai-camera-autostart.sh' '$TARGET_DIR/rv1106_sender/'* '$TARGET_DIR/rv1106_ai_ui/'* '$OEM_INIT_DIR/S20ai-camera-userdata' '$OEM_INIT_DIR/S95ai-camera-disabled'; '$OEM_INIT_DIR/S20ai-camera-userdata' start"
 
 echo "Deployed: $TARGET_DIR"
 echo "Start on RV1106: cd $COMPAT_DIR && ./run_ai_terminal.sh"

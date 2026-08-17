@@ -203,6 +203,18 @@ echo event > /home/radxa/.config/ai_cam/mode
 
 ### 日常启动 / 停止 / 状态
 
+从 ROCK 2A 统一启停两块板子（RV1106 有线地址为 `192.168.50.2`）：
+
+```sh
+# 一键启动：RV1106 摄像头/Qt/NPU，随后启动 ROCK 2A 接收和识别服务
+ssh root@192.168.50.2 '/etc/init.d/S95ai-camera start' && sudo systemctl start ai-camera
+
+# 一键停止：先停止 RV1106，再停止 ROCK 2A 服务
+ssh root@192.168.50.2 '/etc/init.d/S95ai-camera stop' && sudo systemctl stop ai-camera
+```
+
+单独管理某一块板子时：
+
 ```sh
 # RV1106
 /etc/init.d/S95ai-camera start     # 启动（开机自动执行）
@@ -215,6 +227,15 @@ sudo systemctl start ai-camera     # 启动
 sudo systemctl stop ai-camera      # 停止
 sudo systemctl restart ai-camera   # 重启
 systemctl status ai-camera         # 状态
+```
+
+RV1106 可在可写的 `/userdata` 中持久化禁用自启动，不需要修改只读根分区：
+
+```sh
+cd /root/userdata/ai_camera
+./ai-camera-autostart.sh disable   # 立即停止；后续重启也不会启动
+./ai-camera-autostart.sh enable    # 恢复自启动，并立即启动工程
+./ai-camera-autostart.sh status    # 查看自启动和服务状态
 ```
 
 端口：RV1106 `554`（RTSP）；ROCK 2A `9000`（TCP 回传）、`9001`（手动识别/旧保存）、

@@ -19,6 +19,10 @@ prepare_userdata() {
 }
 
 start() {
+    if [ -f "$PERSIST_ROOT/ai_camera/.autostart-disabled" ]; then
+        echo "ai-camera autostart is disabled"
+        return 0
+    fi
     if ! prepare_userdata; then
         echo "Failed to prepare writable $LEGACY_ROOT"
         return 1

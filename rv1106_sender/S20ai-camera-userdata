@@ -2,6 +2,9 @@
 
 PERSIST_ROOT=/userdata
 LEGACY_ROOT=/root/userdata
+AUTOSTART_FLAG=$PERSIST_ROOT/ai_camera/.autostart-disabled
+DISABLED_INIT=/oem/usr/etc/init.d/S95ai-camera-disabled
+TARGET_INIT=/etc/init.d/S95ai-camera
 
 case "${1:-start}" in
     start)
@@ -12,6 +15,13 @@ case "${1:-start}" in
             cp -a "$LEGACY_ROOT/." "$PERSIST_ROOT/" || exit 1
         fi
         mount --bind "$PERSIST_ROOT" "$LEGACY_ROOT"
+        if [ -f "$AUTOSTART_FLAG" ]; then
+            if [ ! -x "$DISABLED_INIT" ]; then
+                echo "ai-camera disable shim is missing: $DISABLED_INIT" >&2
+                exit 1
+            fi
+            mount --bind "$DISABLED_INIT" "$TARGET_INIT"
+        fi
         ;;
     stop)
         ;;

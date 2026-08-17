@@ -1,0 +1,4 @@
+#!/bin/sh
+
+# Bound over the read-only S95 script when userdata requests autostart disabled.
+exit 0
