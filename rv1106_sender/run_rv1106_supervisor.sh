@@ -56,9 +56,9 @@ meminfo_kb() {
 
 rotate_file() {
     f=$1
-    [ -f "$f" ] || return 0
+    [ -f "$f" ] || return 1
     size=$(wc -c <"$f" 2>/dev/null || echo 0)
-    [ "$size" -lt "$LOG_MAX" ] && return 0
+    [ "$size" -lt "$LOG_MAX" ] && return 1
     n=$LOG_KEEP
     while [ "$n" -gt 1 ]; do
         prev=$((n - 1))
@@ -73,7 +73,14 @@ start_logger() {
     fifo=$1
     logfile=$2
     [ -p "$fifo" ] || mkfifo "$fifo" 2>/dev/null
-    (while :; do cat "$fifo" >>"$logfile"; done) &
+    (
+        while :; do
+            while IFS= read -r line; do
+                printf '%s\n' "$line"
+            done <"$fifo"
+            sleep 1
+        done
+    ) >>"$logfile" &
     LOGGER_PIDS="$LOGGER_PIDS $!"
 }
 
@@ -92,10 +99,15 @@ stop_loggers() {
 }
 
 rotate_logs() {
-    old_pids=$LOGGER_PIDS
+    rotated=0
     for f in supervisor.log ai_cam.log qt.log; do
-        rotate_file "$LOG_DIR/$f"
+        if rotate_file "$LOG_DIR/$f"; then
+            rotated=1
+        fi
     done
+    [ "$rotated" -eq 1 ] || return 0
+
+    old_pids=$LOGGER_PIDS
     start_loggers
     for pid in $old_pids; do
         kill -TERM "$pid" 2>/dev/null || true
@@ -264,6 +276,11 @@ trap 'cleanup' INT TERM
 
 mkdir -p "$LOG_DIR" "$FIFO_DIR"
 rm -f "$USER_EXIT"
+
+if ! : >"$LOG_DIR/.write_test" 2>/dev/null; then
+    exit 1
+fi
+rm -f "$LOG_DIR/.write_test"
 
 log "=== RV1106 supervisor starting ==="
 

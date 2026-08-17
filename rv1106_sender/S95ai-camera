@@ -2,8 +2,27 @@
 
 DAEMON=/root/userdata/ai_camera/run_rv1106_supervisor.sh
 PIDFILE=/var/run/ai-camera.pid
+PERSIST_ROOT=/userdata
+LEGACY_ROOT=/root/userdata
+
+prepare_userdata() {
+    if grep -q " $LEGACY_ROOT " /proc/mounts 2>/dev/null; then
+        return 0
+    fi
+
+    if [ ! -x "$PERSIST_ROOT/ai_camera/run_rv1106_supervisor.sh" ]; then
+        echo "Copying ai-camera files to writable userdata..."
+        cp -a "$LEGACY_ROOT/." "$PERSIST_ROOT/" || return 1
+    fi
+
+    mount --bind "$PERSIST_ROOT" "$LEGACY_ROOT" || return 1
+}
 
 start() {
+    if ! prepare_userdata; then
+        echo "Failed to prepare writable $LEGACY_ROOT"
+        return 1
+    fi
     if [ ! -x "$DAEMON" ]; then
         echo "ai-camera supervisor not found: $DAEMON"
         return 1

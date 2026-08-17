@@ -72,6 +72,9 @@ rv1106_sender/out/run_ai_terminal.sh
 
 智能视觉终端使用统一部署目录 `/root/userdata/ai_camera/`，一键启动摄像头、RTSP 和 Qt LCD：
 
+在根分区只读的固件中，`S20ai-camera-userdata` 会在启动早期将可写的
+`/userdata` 绑定到兼容路径 `/root/userdata`，避免日志写入失败和启动进程空转。
+
 ```sh
 cd /root/userdata/ai_camera
 ./run_ai_terminal.sh

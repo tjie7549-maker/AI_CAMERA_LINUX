@@ -58,11 +58,6 @@ QString cloudStateText(const QString &state)
     return state.isEmpty() ? QStringLiteral("未请求") : state;
 }
 
-QString shortEventId(const QString &eventId)
-{
-    if (eventId.size() <= 22) return eventId;
-    return eventId.left(10) + QStringLiteral("…") + eventId.right(7);
-}
 } // namespace
 
 MainWindow::MainWindow(ManualRecognitionClient *manualClient,
@@ -86,7 +81,6 @@ MainWindow::MainWindow(ManualRecognitionClient *manualClient,
       peopleValue_(nullptr),
       objectsValue_(nullptr),
       warningValue_(nullptr),
-      warningReasonValue_(nullptr),
       summaryValue_(nullptr),
       eventValue_(nullptr),
       latencyValue_(nullptr),
@@ -276,24 +270,39 @@ void MainWindow::buildUi()
     resultPanel->setFixedSize(268, 454);
     auto *resultLayout = new QVBoxLayout(resultPanel);
     resultLayout->setContentsMargins(13, 12, 13, 12);
-    resultLayout->setSpacing(2);
+    resultLayout->setSpacing(4);
     resultLayout->addWidget(makeLabel(QStringLiteral("识别结果"),
                                       QStringLiteral("sectionTitle"), resultPanel));
 
-    sceneValue_ = makeLabel(QString(), QStringLiteral("fieldValue"), resultPanel);
+    sceneValue_ = makeLabel(QString(), QStringLiteral("resultPrimary"), resultPanel);
     peopleValue_ = makeLabel(QString(), QStringLiteral("fieldValue"), resultPanel);
-    objectsValue_ = makeLabel(QString(), QStringLiteral("fieldValue"), resultPanel);
+    objectsValue_ = makeLabel(QString(), QStringLiteral("resultDetail"), resultPanel);
     warningValue_ = makeLabel(QString(), QStringLiteral("alertValue"), resultPanel);
-    warningReasonValue_ = makeLabel(QString(), QStringLiteral("fieldValue"), resultPanel);
     summaryValue_ = makeLabel(QString(), QStringLiteral("summaryValue"), resultPanel);
     eventValue_ = makeLabel(QString(), QStringLiteral("eventValue"), resultPanel);
-    addResultField(resultLayout, QStringLiteral("当前事件"), eventValue_, 52);
-    addResultField(resultLayout, QStringLiteral("场景"), sceneValue_, 34);
-    addResultField(resultLayout, QStringLiteral("人数"), peopleValue_, 26);
-    addResultField(resultLayout, QStringLiteral("物体"), objectsValue_, 36);
-    addResultField(resultLayout, QStringLiteral("告警"), warningValue_, 26);
-    addResultField(resultLayout, QStringLiteral("原因"), warningReasonValue_, 34);
-    addResultField(resultLayout, QStringLiteral("摘要"), summaryValue_, 52);
+    eventValue_->setMaximumHeight(22);
+    resultLayout->addWidget(eventValue_);
+    addResultField(resultLayout, QStringLiteral("场景"), sceneValue_, 48);
+
+    auto *resultStatusLayout = new QHBoxLayout;
+    resultStatusLayout->setContentsMargins(0, 0, 0, 0);
+    resultStatusLayout->setSpacing(14);
+    auto addCompactField = [resultPanel, resultStatusLayout](const QString &caption,
+                                                              QLabel *value) {
+        auto *field = new QWidget(resultPanel);
+        auto *fieldLayout = new QVBoxLayout(field);
+        fieldLayout->setContentsMargins(0, 0, 0, 0);
+        fieldLayout->setSpacing(0);
+        fieldLayout->addWidget(makeLabel(caption, QStringLiteral("fieldCaption"), field));
+        fieldLayout->addWidget(value);
+        resultStatusLayout->addWidget(field, 1);
+    };
+    addCompactField(QStringLiteral("人数"), peopleValue_);
+    addCompactField(QStringLiteral("状态"), warningValue_);
+    resultLayout->addLayout(resultStatusLayout);
+
+    addResultField(resultLayout, QStringLiteral("物品"), objectsValue_, 32);
+    addResultField(resultLayout, QStringLiteral("识别摘要"), summaryValue_, 68);
     resultLayout->addStretch();
     middleLayout->addWidget(resultPanel);
     rootLayout->addLayout(middleLayout);
@@ -353,9 +362,8 @@ void MainWindow::showDefaultState()
     sceneValue_->setText(result.scene);
     peopleValue_->setText(QString::number(result.peopleCount));
     objectsValue_->setText(QStringLiteral("无"));
-    warningReasonValue_->setText(QStringLiteral("-"));
     summaryValue_->setText(result.summary);
-    eventValue_->setText(QStringLiteral("无活动事件"));
+    eventValue_->setText(QStringLiteral("等待检测事件"));
     modelLabel_->setText(QStringLiteral("模型  %1").arg(result.model));
     latencyValue_->setText(QStringLiteral("-- ms"));
     totalTokensValue_->setText(QStringLiteral("0"));
@@ -412,11 +420,6 @@ void MainWindow::updateAiResult(const AiResult &result)
     objectsValue_->setText(result.objects.isEmpty()
                                ? QStringLiteral("无")
                                : result.objects.join(QStringLiteral(", ")));
-    warningReasonValue_->setText(result.warning
-                                     ? (result.warningReason.isEmpty()
-                                            ? QStringLiteral("未说明告警原因")
-                                            : result.warningReason)
-                                     : QStringLiteral("-"));
     summaryValue_->setText(result.summary);
     modelLabel_->setText(QStringLiteral("模型  %1").arg(result.model));
     latencyValue_->setText(QStringLiteral("%1 ms").arg(result.latencyMs));
@@ -611,23 +614,22 @@ void MainWindow::applyEventResult(const AiResult &result)
     currentEventId_ = result.eventId;
     currentEventState_ = result.eventState;
     eventValue_->setText(
-        QStringLiteral("%1  %2\n人数 %3/%4  跟踪 %5  %6秒\n云端 %7  最佳帧 %8")
-            .arg(shortEventId(result.eventId), eventStateText(result.eventState))
-            .arg(result.currentPeople)
-            .arg(result.maxPeople)
-            .arg(result.trackCount)
-            .arg(result.durationMs / 1000)
-            .arg(cloudStateText(result.cloudState))
-            .arg(result.bestFrameId));
-    peopleValue_->setText(QString::number(result.currentPeople));
+        QStringLiteral("事件%1 · 云端%2")
+            .arg(eventStateText(result.eventState), cloudStateText(result.cloudState)));
+    peopleValue_->setText(result.maxPeople > result.currentPeople
+                              ? QStringLiteral("%1 人（最高 %2）")
+                                    .arg(result.currentPeople).arg(result.maxPeople)
+                              : QStringLiteral("%1 人").arg(result.currentPeople));
     if (!result.summary.isEmpty() &&
         result.summary != QStringLiteral("暂无识别结果")) {
         summaryValue_->setText(result.summary);
-        warningReasonValue_->setText(result.warning
-                                         ? result.warningReason
-                                         : QStringLiteral("-"));
-        setStateLabel(warningValue_, result.warning ? QStringLiteral("告警")
-                                                    : QStringLiteral("正常"),
+        const QString warningText = result.warning
+            ? QStringLiteral("告警%1")
+                  .arg(result.warningReason.isEmpty()
+                           ? QString()
+                           : QStringLiteral(" · %1").arg(result.warningReason))
+            : QStringLiteral("正常");
+        setStateLabel(warningValue_, warningText,
                       result.warning ? QStringLiteral("warning")
                                      : QStringLiteral("normal"));
     }
@@ -814,7 +816,6 @@ void MainWindow::applyManualResult(const AiResult &result, qint64 totalElapsedMs
     peopleValue_->setText(QString::number(result.peopleCount));
     objectsValue_->setText(result.objects.isEmpty() ? QStringLiteral("无")
                                                     : result.objects.join(QStringLiteral(", ")));
-    warningReasonValue_->setText(result.warning ? result.warningReason : QStringLiteral("-"));
     summaryValue_->setText(result.summary);
     modelLabel_->setText(QStringLiteral("手动识别  帧 %1").arg(result.frameId));
     latencyValue_->setText(QStringLiteral("%1 ms").arg(result.latencyMs));

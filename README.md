@@ -148,26 +148,30 @@ Qt 与 RKMPI VO 不能同时占用 LCD。智能视觉模式中使用 no-VO 发�
 
 ### 部署 RV1106
 
-板端部署目录：`/root/userdata/ai_camera/`
+板端物理部署目录：`/userdata/ai_camera/`。启动早期会将可写的 `/userdata`
+绑定到兼容路径 `/root/userdata`，运行命令仍使用 `/root/userdata/ai_camera/`。
 
 ```sh
 # 1) 部署发送端（交叉编译产物 + 启动脚本）
 scp rv1106_sender/out/simple_vi_get_frame_send_vo_rv1106 \
     rv1106_sender/out/run_ai_headless_preview.sh \
-    root@192.168.50.2:/root/userdata/ai_camera/rv1106_sender/
+    root@192.168.50.2:/userdata/ai_camera/rv1106_sender/
 
 # 2) 部署 Qt（交叉编译产物 + 运行脚本 + 中文字体）
 scp rv1106_ai_ui/build/rv1106_ai_ui rv1106_ai_ui/scripts/run.sh \
-    root@192.168.50.2:/root/userdata/ai_camera/rv1106_ai_ui/
+    root@192.168.50.2:/userdata/ai_camera/rv1106_ai_ui/
 scp /usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf \
-    root@192.168.50.2:/root/userdata/ai_camera/rv1106_ai_ui/fonts/
+    root@192.168.50.2:/userdata/ai_camera/rv1106_ai_ui/fonts/
 
 # 3) 部署 supervisor 与开机自启
 scp rv1106_sender/run_rv1106_supervisor.sh \
-    root@192.168.50.2:/root/userdata/ai_camera/
-scp rv1106_sender/S95ai-camera root@192.168.50.2:/etc/init.d/
+    root@192.168.50.2:/userdata/ai_camera/
+scp rv1106_sender/S20ai-camera-userdata \
+    root@192.168.50.2:/oem/usr/etc/init.d/
 ssh root@192.168.50.2 \
-    'chmod +x /root/userdata/ai_camera/run_rv1106_supervisor.sh /etc/init.d/S95ai-camera'
+    'chmod +x /userdata/ai_camera/run_rv1106_supervisor.sh /oem/usr/etc/init.d/S20ai-camera-userdata'
+
+# S95ai-camera 需在制作固件时放入只读根分区 /etc/init.d/。
 
 # 4) 系统网络配置（一次性）
 #   /etc/network/interfaces: eth0 静态 192.168.50.2/24

@@ -1,0 +1,18 @@
+#!/bin/sh
+
+PERSIST_ROOT=/userdata
+LEGACY_ROOT=/root/userdata
+
+case "${1:-start}" in
+    start)
+        if grep -q " $LEGACY_ROOT " /proc/mounts 2>/dev/null; then
+            exit 0
+        fi
+        if [ ! -x "$PERSIST_ROOT/ai_camera/run_rv1106_supervisor.sh" ]; then
+            cp -a "$LEGACY_ROOT/." "$PERSIST_ROOT/" || exit 1
+        fi
+        mount --bind "$PERSIST_ROOT" "$LEGACY_ROOT"
+        ;;
+    stop)
+        ;;
+esac

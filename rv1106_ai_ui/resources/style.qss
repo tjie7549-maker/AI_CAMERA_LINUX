@@ -142,6 +142,19 @@ QLabel#fieldValue {
     font-size: 17px;
 }
 
+QLabel#resultPrimary {
+    color: #edf2f5;
+    font-family: "Droid Sans Fallback";
+    font-size: 18px;
+    font-weight: 700;
+}
+
+QLabel#resultDetail {
+    color: #d5e0e7;
+    font-family: "Droid Sans Fallback";
+    font-size: 16px;
+}
+
 QLabel#summaryValue {
     color: #cdd7de;
     font-family: "Droid Sans Fallback";
@@ -149,9 +162,10 @@ QLabel#summaryValue {
 }
 
 QLabel#eventValue {
-    color: #44c2d7;
+    color: #79cbd8;
     font-family: "Droid Sans Fallback";
-    font-size: 12px;
+    font-size: 14px;
+    font-weight: 700;
 }
 
 QLabel#alertValue {

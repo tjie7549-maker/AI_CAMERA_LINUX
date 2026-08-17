@@ -192,8 +192,17 @@ stop_rkipc() {
 		sleep 1
 	done
 	if pidof rkipc >/dev/null 2>&1; then
-		echo "Failed to stop rkipc" >&2
-		return 1
+		echo "rkipc did not stop after 15s; forcing the hung legacy service down" >&2
+		killall -KILL rkipc >/dev/null 2>&1
+		count=0
+		while pidof rkipc >/dev/null 2>&1 && [ "$count" -lt 5 ]; do
+			count=$((count + 1))
+			sleep 1
+		done
+		if pidof rkipc >/dev/null 2>&1; then
+			echo "Failed to stop rkipc after SIGKILL" >&2
+			return 1
+		fi
 	fi
 
 	# rkipc may spawn an eth0 DHCP client after opening media resources.  Its

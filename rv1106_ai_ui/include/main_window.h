@@ -95,7 +95,6 @@ private:
     QLabel *peopleValue_;
     QLabel *objectsValue_;
     QLabel *warningValue_;
-    QLabel *warningReasonValue_;
     QLabel *summaryValue_;
     QLabel *eventValue_;
 
