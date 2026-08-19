@@ -1,0 +1,9 @@
+QWidget#page { background: #101720; color: #eaf2ff; font-family: "Noto Sans CJK SC"; }
+QLabel#title { font-size: 32px; font-weight: 700; }
+QLabel#hint { color: #9aadc2; font-size: 16px; }
+QLabel#preview { background: #172433; border: 2px solid #3c5b78; border-radius: 14px; color: #91a7be; font-size: 22px; }
+QLabel#status { background: #172433; border-radius: 10px; padding: 12px; color: #c7d8ea; font-size: 15px; }
+QPushButton { min-height: 58px; border-radius: 10px; font-size: 22px; font-weight: 600; }
+QPushButton#primary { background: #2374d7; color: white; border: none; }
+QPushButton#secondary { background: #223445; color: #eaf2ff; border: 1px solid #486882; }
+QPushButton:disabled { background: #263746; color: #7c91a4; }

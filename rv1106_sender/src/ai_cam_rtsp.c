@@ -2,17 +2,20 @@
 #include "rk_debug.h"
 
 int ai_cam_rtsp_start(AiCamApp *app) {
+	const int port = app->config.preview_shm_name ? 8554 : 554;
+
 	if (pthread_mutex_init(&app->rtsp_mutex, NULL) != 0) {
 		RK_LOGE("RTSP mutex initialization failed");
 		return RK_FAILURE;
 	}
 	app->rtsp_mutex_initialized = true;
 
-	app->rtsp_demo = create_rtsp_demo(554);
+	app->rtsp_demo = create_rtsp_demo(port);
 	if (!app->rtsp_demo) {
-		RK_LOGE("create_rtsp_demo failed");
+		RK_LOGE("create_rtsp_demo(%d) failed", port);
 		return RK_FAILURE;
 	}
+	printf("#RTSP server: port=%d main=/live/0 sub=/live/1\n", port);
 	app->rtsp_main_session = rtsp_new_session(app->rtsp_demo, "/live/0");
 	if (!app->rtsp_main_session)
 		goto failed;

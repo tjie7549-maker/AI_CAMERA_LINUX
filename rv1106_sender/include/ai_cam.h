@@ -21,6 +21,7 @@
 #define AI_CAM_VPSS_ENCODE_CHN 1
 #define AI_CAM_VPSS_SUB_ENCODE_CHN 2
 #define AI_CAM_VPSS_PREVIEW_CHN 3
+#define AI_CAM_VPSS_FACE_CHN 4
 #define AI_CAM_VENC_CHN 0
 #define AI_CAM_SUB_VENC_CHN 1
 
@@ -51,6 +52,11 @@ typedef struct {
 	int preview_width;
 	int preview_height;
 	int preview_fps;
+	/* Optional, on-demand high-resolution face ROI capture service. */
+	const char *face_snapshot_socket;
+	int face_width;
+	int face_height;
+	const char *isp_control_socket;
 } AiCamConfig;
 
 typedef struct {
@@ -85,6 +91,7 @@ typedef struct {
 	bool preview_initialized;
 	bool preview_thread_started;
 	bool preview_fd_thread_started;
+	bool face_snapshot_thread_started;
 	rtsp_demo_handle rtsp_demo;
 	rtsp_session_handle rtsp_main_session;
 	rtsp_session_handle rtsp_sub_session;
@@ -98,6 +105,8 @@ typedef struct {
 	pthread_t forwarding_thread;
 	pthread_t preview_thread;
 	pthread_t preview_fd_thread;
+	pthread_t face_snapshot_thread;
+	int face_snapshot_server;
 	int preview_shm_fd;
 	int preview_fd_server;
 	size_t preview_shm_bytes;
@@ -122,6 +131,8 @@ void ai_cam_stats_print_period(AiCamApp *app, const AiCamStats *lcd_stats,
 
 int ai_cam_isp_start(AiCamApp *app);
 void ai_cam_isp_stop(AiCamApp *app);
+int ai_cam_isp_set_auto_ae(AiCamApp *app);
+int ai_cam_isp_set_manual_ae(AiCamApp *app, int exposure_lines, int analogue_gain);
 int ai_cam_vi_start(AiCamApp *app);
 void ai_cam_vi_stop(AiCamApp *app);
 int ai_cam_vpss_start(AiCamApp *app);
@@ -138,5 +149,7 @@ int ai_cam_rtsp_start(AiCamApp *app);
 void ai_cam_rtsp_stop(AiCamApp *app);
 int ai_cam_preview_start(AiCamApp *app);
 void ai_cam_preview_stop(AiCamApp *app);
+int ai_cam_face_snapshot_start(AiCamApp *app);
+void ai_cam_face_snapshot_stop(AiCamApp *app);
 
 #endif

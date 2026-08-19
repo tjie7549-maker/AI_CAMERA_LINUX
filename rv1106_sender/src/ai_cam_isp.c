@@ -3,6 +3,12 @@
 
 #include "ai_cam.h"
 #include "rk_debug.h"
+#include "rk_aiq_user_api2_ae.h"
+
+/* Calibrated against SC3336's active 25 FPS timing: 320 requested lines must
+ * read back as 320 lines (not the 358 caused by the nominal pixel clock). */
+#define SC3336_LINE_TIME_SECONDS (1.0f / 40800.0f)
+#define SC3336_GAIN_UNIT 128.0f
 
 static XCamReturn ai_cam_isp_sof_callback(rk_aiq_metas_t *meta) {
 	(void)meta;
@@ -60,4 +66,28 @@ void ai_cam_isp_stop(AiCamApp *app) {
 	rk_aiq_uapi2_sysctl_stop(app->aiq_ctx, false);
 	rk_aiq_uapi2_sysctl_deinit(app->aiq_ctx);
 	app->aiq_ctx = NULL;
+}
+
+int ai_cam_isp_set_auto_ae(AiCamApp *app) {
+	Uapi_ExpSwAttrV2_t attr;
+	if (!app || !app->aiq_ctx || rk_aiq_user_api2_ae_getExpSwAttr(app->aiq_ctx, &attr) != XCAM_RETURN_NO_ERROR)
+		return RK_FAILURE;
+	attr.AecOpType = RK_AIQ_OP_MODE_AUTO;
+	attr.stManual.LinearAE.ManualGainEn = false;
+	attr.stManual.LinearAE.ManualTimeEn = false;
+	return rk_aiq_user_api2_ae_setExpSwAttr(app->aiq_ctx, attr) == XCAM_RETURN_NO_ERROR ? RK_SUCCESS : RK_FAILURE;
+}
+
+int ai_cam_isp_set_manual_ae(AiCamApp *app, int exposure_lines, int analogue_gain) {
+	Uapi_ExpSwAttrV2_t attr;
+	if (!app || !app->aiq_ctx || exposure_lines < 1 || analogue_gain < 128 ||
+	    rk_aiq_user_api2_ae_getExpSwAttr(app->aiq_ctx, &attr) != XCAM_RETURN_NO_ERROR)
+		return RK_FAILURE;
+	attr.AecOpType = RK_AIQ_OP_MODE_MANUAL;
+	attr.stManual.LinearAE.ManualGainEn = true;
+	attr.stManual.LinearAE.ManualTimeEn = true;
+	attr.stManual.LinearAE.ManualIspDgainEn = false;
+	attr.stManual.LinearAE.GainValue = (float)analogue_gain / SC3336_GAIN_UNIT;
+	attr.stManual.LinearAE.TimeValue = (float)exposure_lines * SC3336_LINE_TIME_SECONDS;
+	return rk_aiq_user_api2_ae_setExpSwAttr(app->aiq_ctx, attr) == XCAM_RETURN_NO_ERROR ? RK_SUCCESS : RK_FAILURE;
 }

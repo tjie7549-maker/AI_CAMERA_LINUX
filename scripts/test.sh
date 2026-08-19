@@ -5,10 +5,11 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT"
 
 echo "[1/6] Python syntax"
-python3 -m compileall -q rock2a_receiver/tools/qwen_vision rock2a_receiver/tests
+python3 -m compileall -q rock2a_receiver/tools/qwen_vision rock2a_receiver/tools/face_attendance rock2a_receiver/tests
 
 echo "[2/6] Python unit tests"
 python3 -m unittest discover -s rock2a_receiver/tests -p 'test_*.py' -v
+python3 -m unittest discover -s rock2a_receiver/tools/face_attendance/tests -p 'test_*.py' -v
 
 echo "[3/6] Shell syntax"
 while IFS= read -r script; do
