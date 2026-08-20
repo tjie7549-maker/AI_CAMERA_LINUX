@@ -39,8 +39,12 @@ static void mkdir_parent(const std::string& path) { size_t p=0; while((p=path.fi
 
 struct CameraDaemon::Impl {
   DaemonConfig c; int server_fd; pid_t sender_pid, npu_pid, rkipc_pid; bool running, npu_started_once, manual_restart_pending;
+  /* V4L2 control readback is the sensor driver's cached state.  Once RKAIQ
+   * owns AE it is not a reliable source for the last manual request, so keep
+   * the accepted setpoints here and use them for subsequent transactions. */
+  int manual_exposure, manual_gain;
   int failures, dark_frames, bright_frames; long long restart_at, npu_start_at; std::string state, last_error, mode;
-  Impl(const DaemonConfig& x):c(x),server_fd(-1),sender_pid(-1),npu_pid(-1),rkipc_pid(-1),running(true),npu_started_once(false),manual_restart_pending(false),failures(0),dark_frames(0),bright_frames(0),restart_at(0),npu_start_at(0),state("NORMAL"),mode("DISPLAY") {}
+  Impl(const DaemonConfig& x):c(x),server_fd(-1),sender_pid(-1),npu_pid(-1),rkipc_pid(-1),running(true),npu_started_once(false),manual_restart_pending(false),manual_exposure(x.default_exposure),manual_gain(x.default_analogue_gain),failures(0),dark_frames(0),bright_frames(0),restart_at(0),npu_start_at(0),state("NORMAL"),mode("DISPLAY") {}
   void event(const char* type, const std::string& detail) {
     mkdir_parent(c.log_path); int fd=open(c.log_path.c_str(),O_WRONLY|O_CREAT|O_APPEND,0644); if(fd<0)return;
     std::ostringstream o; o << "{\"monotonic_ms\":" << monotonic_ms() << ",\"type\":\"" << type << "\",\"state\":\"" << state << "\",\"detail\":\"" << json_escape(detail) << "\"}\n";
@@ -99,22 +103,12 @@ struct CameraDaemon::Impl {
   }
   bool exit_debug() {
     if(mode=="DISPLAY")return true;
-    if(!isp("auto\n")) {
-      /* This RKAIQ build may reject AUTO after a live MANUAL transaction.
-       * Recreating only the project pipeline is deterministic and restores
-       * automatic AE without touching rkipc or the network. */
-      stop_capture();
-      mode="DISPLAY";
-      c.auto_ae=true;
-      if(!start_capture()) { last_error="cannot restart pipeline for auto AE"; return false; }
-      start_npu_later();
-      last_error.clear();
-      event("debug_exited","pipeline restarted to restore automatic AE");
-      return true;
-    }
+    /* Leaving this page must not recycle media-sender.  Some RKAIQ builds
+     * reject AUTO after MANUAL AE; restarting then replaces the DMA-BUF
+     * preview while Qt still holds old FDs and makes the display go black.
+     * Automatic AE is therefore an explicit in-page operation. */
     mode="DISPLAY";
-    c.auto_ae=true;
-    event("debug_exited","rkipc RTSP remained continuous");
+    event("debug_exited",c.auto_ae ? "returned to preview with auto AE" : "returned to preview with retained manual AE");
     return true;
   }
   void kill_child(pid_t* p) {
@@ -190,8 +184,16 @@ struct CameraDaemon::Impl {
   bool control(const std::string& id, int value) {
     if(mode!="DEBUG") { last_error="参数调节仅在驱动调试模式可用"; return false; }
     if(c.auto_ae && (id=="exposure"||id=="analogue_gain")) { last_error="manual exposure/gain rejected while auto_ae=true"; return false; }
-    if(id=="exposure")return isp("manual "+std::to_string(value)+" "+std::to_string(read_control(V4L2_CID_ANALOGUE_GAIN))+"\n");
-    if(id=="analogue_gain")return isp("manual "+std::to_string(read_control(V4L2_CID_EXPOSURE))+" "+std::to_string(value)+"\n");
+    if(id=="exposure") {
+      const int gain=manual_gain>=128 ? manual_gain : c.default_analogue_gain;
+      if(!isp("manual "+std::to_string(value)+" "+std::to_string(gain)+"\n"))return false;
+      manual_exposure=value; manual_gain=gain; event("control_set","exposure"); return true;
+    }
+    if(id=="analogue_gain") {
+      const int exposure=manual_exposure>=1 ? manual_exposure : c.default_exposure;
+      if(!isp("manual "+std::to_string(exposure)+" "+std::to_string(value)+"\n"))return false;
+      manual_exposure=exposure; manual_gain=value; event("control_set","analogue_gain"); return true;
+    }
     __u32 cid=0; if(id=="vblank")cid=V4L2_CID_VBLANK; else if(id=="hflip")cid=V4L2_CID_HFLIP; else if(id=="vflip")cid=V4L2_CID_VFLIP; else if(id=="test_pattern")cid=V4L2_CID_TEST_PATTERN; else {last_error="unsupported control";return false;}
     int fd=open(c.sensor_subdev.c_str(),O_RDWR); if(fd<0){last_error="open sensor failed: "+std::string(strerror(errno));return false;}
     struct v4l2_control ctl; memset(&ctl,0,sizeof(ctl)); ctl.id=cid;ctl.value=value; int r=ioctl(fd,VIDIOC_S_CTRL,&ctl); close(fd); if(r<0){last_error="VIDIOC_S_CTRL failed: "+std::string(strerror(errno));return false;} event("control_set",id); return true;
@@ -211,7 +213,7 @@ struct CameraDaemon::Impl {
       struct v4l2_control ctl; memset(&ctl,0,sizeof(ctl)); ctl.id=ids[i]; ctl.value=values[i];
       if(ioctl(fd,VIDIOC_S_CTRL,&ctl)<0) { close(fd); last_error="restore default failed: "+std::string(strerror(errno)); return false; }
     }
-    close(fd); c.auto_ae=false; last_error.clear(); event("controls_restored","fixed SC3336 defaults, auto_ae=false"); return true;
+    close(fd); manual_exposure=c.default_exposure; manual_gain=c.default_analogue_gain; c.auto_ae=false; last_error.clear(); event("controls_restored","fixed SC3336 defaults, auto_ae=false"); return true;
   }
   int read_control(__u32 cid) const {
     int fd=open(c.sensor_subdev.c_str(),O_RDONLY);
@@ -224,8 +226,8 @@ struct CameraDaemon::Impl {
     std::ostringstream o;
     o<<"{\"ok\":true,\"state\":\""<<state<<"\",\"mode\":\""<<mode<<"\",\"auto_ae\":"<<(c.auto_ae?"true":"false")
      <<",\"pipeline_pid\":"<<sender_pid<<",\"npu_pid\":"<<npu_pid<<",\"failures\":"<<failures
-     <<",\"last_error\":\""<<json_escape(last_error)<<"\",\"controls\":{\"exposure\":"<<read_control(V4L2_CID_EXPOSURE)
-     <<",\"analogue_gain\":"<<read_control(V4L2_CID_ANALOGUE_GAIN)<<",\"vblank\":"<<read_control(V4L2_CID_VBLANK)
+     <<",\"last_error\":\""<<json_escape(last_error)<<"\",\"controls\":{\"exposure\":"<<(c.auto_ae ? read_control(V4L2_CID_EXPOSURE) : manual_exposure)
+     <<",\"analogue_gain\":"<<(c.auto_ae ? read_control(V4L2_CID_ANALOGUE_GAIN) : manual_gain)<<",\"vblank\":"<<read_control(V4L2_CID_VBLANK)
      <<",\"hflip\":"<<read_control(V4L2_CID_HFLIP)<<",\"vflip\":"<<read_control(V4L2_CID_VFLIP)
      <<",\"test_pattern\":"<<read_control(V4L2_CID_TEST_PATTERN)<<"}}";
     return o.str();
@@ -268,7 +270,7 @@ std::string CameraDaemon::handle(const std::string& r) {
     impl_->event("restart_requested","");
     return "{\"ok\":true}";
   }
-  if(cmd=="set_auto_ae"){if(impl_->mode!="DEBUG")return "{\"ok\":false,\"error\":\"请先进入驱动调试模式\"}";bool x;if(!bool_field(r,"auto_ae",&x))return "{\"ok\":false,\"error\":\"missing auto_ae\"}";bool ok=x?impl_->isp("auto\n"):impl_->isp("manual "+std::to_string(impl_->read_control(V4L2_CID_EXPOSURE))+" "+std::to_string(impl_->read_control(V4L2_CID_ANALOGUE_GAIN))+"\n");if(!ok)return "{\"ok\":false,\"error\":\""+json_escape(impl_->last_error)+"\"}";impl_->c.auto_ae=x;return impl_->status();}
+  if(cmd=="set_auto_ae"){if(impl_->mode!="DEBUG")return "{\"ok\":false,\"error\":\"请先进入驱动调试模式\"}";bool x;if(!bool_field(r,"auto_ae",&x))return "{\"ok\":false,\"error\":\"missing auto_ae\"}";int exposure=impl_->manual_exposure>=1?impl_->manual_exposure:impl_->c.default_exposure;int gain=impl_->manual_gain>=128?impl_->manual_gain:impl_->c.default_analogue_gain;bool ok=x?impl_->isp("auto\n"):impl_->isp("manual "+std::to_string(exposure)+" "+std::to_string(gain)+"\n");if(!ok)return "{\"ok\":false,\"error\":\""+json_escape(impl_->last_error)+"\"}";impl_->c.auto_ae=x;impl_->event("ae_mode",x?"auto":"manual");return impl_->status();}
   if(cmd=="set_control"){std::string id;double v;if(!field(r,"id",&id)||!number_field(r,"value",&v))return "{\"ok\":false,\"error\":\"id/value required\"}";return impl_->control(id,(int)v)?"{\"ok\":true}":"{\"ok\":false,\"error\":\""+json_escape(impl_->last_error)+"\"}";}
   if(cmd=="restore_defaults")return impl_->restore_defaults()?impl_->status():"{\"ok\":false,\"error\":\""+json_escape(impl_->last_error)+"\"}";
   if(cmd=="report_metrics"){double luma=0,lat=0;bool stream=true;number_field(r,"luma",&luma);number_field(r,"npu_latency_ms",&lat);bool_field(r,"stream_ok",&stream);if(!stream){++impl_->failures;} if(luma<impl_->c.low_light_luma){++impl_->dark_frames;impl_->bright_frames=0;if(impl_->dark_frames>=impl_->c.low_light_frames&&impl_->state=="NORMAL"){impl_->state="LOW_LIGHT";impl_->event("low_light","threshold reached");}}else{++impl_->bright_frames;impl_->dark_frames=0;if(impl_->state=="LOW_LIGHT"&&impl_->bright_frames>=impl_->c.recover_frames){impl_->state="NORMAL";impl_->event("light_recovered","");}}if(lat>impl_->c.npu_latency_max_ms)impl_->event("npu_latency_high","threshold exceeded");return impl_->status();}

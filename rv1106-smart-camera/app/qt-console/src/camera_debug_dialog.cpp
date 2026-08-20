@@ -111,10 +111,10 @@ CameraDebugDialog::CameraDebugDialog(DaemonClient *client, QWidget *parent)
     driver_->setObjectName(QStringLiteral("debugValue")); driver_->setWordWrap(true); metricLayout->addWidget(driver_); overviewLayout->addWidget(metricCard); overviewLayout->addStretch(); tabs->addTab(overviewPage, QStringLiteral("状态"));
 
     auto *controlPage = new QWidget(tabs); auto *controlLayout = new QVBoxLayout(controlPage); controlLayout->setContentsMargins(14, 10, 14, 12); controlLayout->setSpacing(7);
-    modeButton_ = new QPushButton(QStringLiteral("进入驱动调试（将短暂接管相机）"), controlPage); modeButton_->setObjectName(QStringLiteral("modeButton")); modeButton_->setFixedHeight(48);
+    modeButton_ = new QPushButton(QStringLiteral("进入参数调节"), controlPage); modeButton_->setObjectName(QStringLiteral("modeButton")); modeButton_->setFixedHeight(48);
     connect(modeButton_, &QPushButton::clicked, this, [this]() { if (debugActive_) client_->exitDebug(); else client_->enterDebug(); }); controlLayout->addWidget(modeButton_);
     controlLayout->addWidget(autoAe_);
-    auto *modeHint = new QLabel(QStringLiteral("展示模式使用项目原生采集，视频与 AI 同源；进入调试后才能修改参数。"), controlPage); modeHint->setObjectName(QStringLiteral("debugHint")); modeHint->setWordWrap(true); controlLayout->addWidget(modeHint);
+    auto *modeHint = new QLabel(QStringLiteral("视频与 AI 始终使用同一条项目采集管线；进入后可修改参数，返回预览会保留当前参数且不会重启视频。"), controlPage); modeHint->setObjectName(QStringLiteral("debugHint")); modeHint->setWordWrap(true); controlLayout->addWidget(modeHint);
     auto *scroll = new QScrollArea(controlPage); scroll->setWidgetResizable(true); scroll->setFrameShape(QFrame::NoFrame);
     auto *controlList = new QWidget(scroll); auto *listLayout = new QVBoxLayout(controlList); listLayout->setContentsMargins(1, 1, 1, 1); listLayout->setSpacing(7);
     addControl(listLayout, QStringLiteral("曝光时间（行）"), QStringLiteral("exposure"), 1, 1624);
@@ -175,7 +175,7 @@ void CameraDebugDialog::updateStatus(const QString &json)
     debugActive_ = o.value(QStringLiteral("mode")).toString() == QStringLiteral("DEBUG");
     autoAe_->blockSignals(true); autoAe_->setChecked(ae); autoAe_->blockSignals(false);
     autoAe_->setEnabled(debugActive_);
-    modeButton_->setText(debugActive_ ? QStringLiteral("退出调试并恢复 rkipc 展示模式") : QStringLiteral("进入驱动调试（将短暂接管相机）"));
+    modeButton_->setText(debugActive_ ? QStringLiteral("返回预览（保持当前参数）") : QStringLiteral("进入参数调节"));
     const QJsonObject values = o.value(QStringLiteral("controls")).toObject();
     for (auto it = controlButtons_.constBegin(); it != controlButtons_.constEnd(); ++it) {
         const int value = values.value(it.key()).toInt(-1); const bool locked = !debugActive_ || (ae && (it.key() == QStringLiteral("exposure") || it.key() == QStringLiteral("analogue_gain")));
@@ -185,10 +185,10 @@ void CameraDebugDialog::updateStatus(const QString &json)
     restoreDefaults_->setEnabled(debugActive_); if (!restoreConfirm_) restoreDefaults_->setText(QStringLiteral("恢复手动安全基线（关闭自动 AE）"));
     const int pipelinePid = o.value(QStringLiteral("pipeline_pid")).toInt(-1); const QString policy = o.value(QStringLiteral("state")).toString(QStringLiteral("未知"));
     if (pipelinePid > 0) {
-        overview_->setText(debugActive_ ? QStringLiteral("● 驱动调试模式：项目独占 SC3336") : QStringLiteral("● 展示模式：rkipc RTSP 正在供流"));
+        overview_->setText(debugActive_ ? QStringLiteral("● 参数调节模式：项目管线独占 SC3336") : QStringLiteral("● 展示模式：项目本地预览与 AI 正在供流"));
         driver_->setText(QStringLiteral("预览由主界面实时显示\n曝光与增益：%1\n%2 PID：%3    异常计数：%4")
                          .arg(ae ? QStringLiteral("自动 ISP 控制") : QStringLiteral("手动控制"))
-                         .arg(debugActive_ ? QStringLiteral("调试取流") : QStringLiteral("RTSP 桥接"))
+                         .arg(debugActive_ ? QStringLiteral("参数调节") : QStringLiteral("本地预览"))
                          .arg(pipelinePid).arg(o.value(QStringLiteral("failures")).toInt()));
         error_->clear();
     } else {

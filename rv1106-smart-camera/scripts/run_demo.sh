@@ -1,7 +1,6 @@
 #!/bin/sh
-# Default: rkipc owns SC3336 and this project consumes its local RTSP stream.
-# Ctrl+C never signals camera-daemon directly; cleanup performs an ordered
-# debug->display handover first, then leaves rkipc running.
+# The project owns SC3336 while this demo is running; rkipc is restored only
+# after the daemon stops. Ctrl+C never signals camera-daemon directly.
 set -u
 
 root=/userdata/rv1106-smart-camera
@@ -38,8 +37,8 @@ cleanup() {
     wait_for_exit "$ui_pid"
   fi
 
-  # This request is safe in either mode.  In DEBUG it first releases every
-  # project-owned media child, then rkipc is started before the daemon exits.
+  # This request only leaves the parameter page; daemon shutdown below releases
+  # the project media children and then restores rkipc.
   "$root/bin/camera-daemon" --request "$root/run/camera-daemon.sock" \
     '{"cmd":"exit_debug"}' >/dev/null 2>&1 || true
 
