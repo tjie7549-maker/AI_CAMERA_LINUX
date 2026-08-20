@@ -1,0 +1,383 @@
+From 24085062c27e9f91ff3ae4c95203b60799e9502c Mon Sep 17 00:00:00 2001
+From: Codex <codex@local.invalid>
+Date: Mon, 17 Aug 2026 17:24:38 +0800
+Subject: [PATCH] media: sc3336: harden stream errors and add stats
+
+Preserve negative I2C errno values, stop multi-register updates at
+the first failure, and keep stream state aligned with successful
+sensor transitions. Add a read-only debugfs stats file for I2C
+activity, last I2C error, stream startup time, and stream state.
+
+Signed-off-by: Codex <codex@local.invalid>
+---
+ .../source/kernel/drivers/media/i2c/sc3336.c  | 202 ++++++++++++++----
+ 1 file changed, 161 insertions(+), 41 deletions(-)
+
+diff --git a/sysdrv/source/kernel/drivers/media/i2c/sc3336.c b/sysdrv/source/kernel/drivers/media/i2c/sc3336.c
+index bea465d80..f549781cc 100644
+--- a/sysdrv/source/kernel/drivers/media/i2c/sc3336.c
++++ b/sysdrv/source/kernel/drivers/media/i2c/sc3336.c
+@@ -9,15 +9,18 @@
+ 
+ //#define DEBUG
+ #include <linux/clk.h>
++#include <linux/debugfs.h>
+ #include <linux/device.h>
+ #include <linux/delay.h>
+ #include <linux/gpio/consumer.h>
+ #include <linux/i2c.h>
++#include <linux/ktime.h>
+ #include <linux/module.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/regulator/consumer.h>
+ #include <linux/sysfs.h>
+ #include <linux/slab.h>
++#include <linux/seq_file.h>
+ #include <linux/version.h>
+ #include <linux/rk-camera-module.h>
+ #include <linux/rk-preisp.h>
+@@ -152,6 +155,7 @@ struct sc3336 {
+ 	struct v4l2_ctrl	*pixel_rate;
+ 	struct v4l2_ctrl	*link_freq;
+ 	struct v4l2_ctrl	*test_pattern;
++	struct dentry		*debugfs_dir;
+ 	struct mutex		mutex;
+ 	struct v4l2_fract	cur_fps;
+ 	bool			streaming;
+@@ -166,6 +170,11 @@ struct sc3336 {
+ 	bool			is_thunderboot;
+ 	bool			is_first_streamoff;
+ 	struct preisp_hdrae_exp_s init_hdrae_exp;
++	u64			i2c_read_count;
++	u64			i2c_write_count;
++	u64			i2c_error_count;
++	int			last_i2c_error;
++	u32			last_stream_start_us;
+ };
+ 
+ #define to_sc3336(sd) container_of(sd, struct sc3336, subdev)
+@@ -510,6 +519,27 @@ static const char * const sc3336_test_pattern_menu[] = {
+ 	"Vertical Color Bar Type 4",
+ };
+ 
++static void sc3336_record_i2c_result(struct i2c_client *client,
++				     bool is_read, int ret)
++{
++	struct v4l2_subdev *sd = i2c_get_clientdata(client);
++	struct sc3336 *sc3336;
++
++	if (!sd)
++		return;
++
++	sc3336 = to_sc3336(sd);
++	if (is_read)
++		sc3336->i2c_read_count++;
++	else
++		sc3336->i2c_write_count++;
++
++	if (ret) {
++		sc3336->i2c_error_count++;
++		sc3336->last_i2c_error = ret;
++	}
++}
++
+ /* Write registers up to 4 at a time */
+ static int sc3336_write_reg(struct i2c_client *client, u16 reg,
+ 			    u32 len, u32 val)
+@@ -518,6 +548,7 @@ static int sc3336_write_reg(struct i2c_client *client, u16 reg,
+ 	u8 buf[6];
+ 	u8 *val_p;
+ 	__be32 val_be;
++	int ret;
+ 
+ 	if (len > 4)
+ 		return -EINVAL;
+@@ -533,9 +564,14 @@ static int sc3336_write_reg(struct i2c_client *client, u16 reg,
+ 	while (val_i < 4)
+ 		buf[buf_i++] = val_p[val_i++];
+ 
+-	if (i2c_master_send(client, buf, len + 2) != len + 2)
+-		return -EIO;
+-	return 0;
++	ret = i2c_master_send(client, buf, len + 2);
++	if (ret == len + 2)
++		ret = 0;
++	else if (ret >= 0)
++		ret = -EIO;
++
++	sc3336_record_i2c_result(client, false, ret);
++	return ret;
+ }
+ 
+ static int sc3336_write_array(struct i2c_client *client,
+@@ -578,8 +614,14 @@ static int sc3336_read_reg(struct i2c_client *client, u16 reg, unsigned int len,
+ 	msgs[1].buf = &data_be_p[4 - len];
+ 
+ 	ret = i2c_transfer(client->adapter, msgs, ARRAY_SIZE(msgs));
+-	if (ret != ARRAY_SIZE(msgs))
+-		return -EIO;
++	if (ret == ARRAY_SIZE(msgs))
++		ret = 0;
++	else if (ret >= 0)
++		ret = -EIO;
++
++	sc3336_record_i2c_result(client, true, ret);
++	if (ret)
++		return ret;
+ 
+ 	*val = be32_to_cpu(data_be);
+ 
+@@ -647,14 +689,18 @@ static int sc3336_set_gain_reg(struct sc3336 *sc3336, u32 gain)
+ 				SC3336_REG_DIG_GAIN,
+ 				SC3336_REG_VALUE_08BIT,
+ 				coarse_dgain);
+-	ret |= sc3336_write_reg(sc3336->client,
+-				 SC3336_REG_DIG_FINE_GAIN,
+-				 SC3336_REG_VALUE_08BIT,
+-				 fine_dgain);
+-	ret |= sc3336_write_reg(sc3336->client,
+-				 SC3336_REG_ANA_GAIN,
+-				 SC3336_REG_VALUE_08BIT,
+-				 coarse_again);
++	if (ret)
++		return ret;
++	ret = sc3336_write_reg(sc3336->client,
++			       SC3336_REG_DIG_FINE_GAIN,
++				SC3336_REG_VALUE_08BIT,
++				fine_dgain);
++	if (ret)
++		return ret;
++	ret = sc3336_write_reg(sc3336->client,
++			       SC3336_REG_ANA_GAIN,
++				SC3336_REG_VALUE_08BIT,
++				coarse_again);
+ 
+ 	return ret;
+ }
+@@ -803,13 +849,15 @@ static int sc3336_enable_test_pattern(struct sc3336 *sc3336, u32 pattern)
+ 
+ 	ret = sc3336_read_reg(sc3336->client, SC3336_REG_TEST_PATTERN,
+ 			       SC3336_REG_VALUE_08BIT, &val);
++	if (ret)
++		return ret;
+ 	if (pattern)
+ 		val |= SC3336_TEST_PATTERN_BIT_MASK;
+ 	else
+ 		val &= ~SC3336_TEST_PATTERN_BIT_MASK;
+ 
+-	ret |= sc3336_write_reg(sc3336->client, SC3336_REG_TEST_PATTERN,
+-				 SC3336_REG_VALUE_08BIT, val);
++	ret = sc3336_write_reg(sc3336->client, SC3336_REG_TEST_PATTERN,
++			       SC3336_REG_VALUE_08BIT, val);
+ 	return ret;
+ }
+ 
+@@ -1047,6 +1095,7 @@ static int sc3336_s_stream(struct v4l2_subdev *sd, int on)
+ {
+ 	struct sc3336 *sc3336 = to_sc3336(sd);
+ 	struct i2c_client *client = sc3336->client;
++	u64 start_ns;
+ 	int ret = 0;
+ 
+ 	mutex_lock(&sc3336->mutex);
+@@ -1056,25 +1105,32 @@ static int sc3336_s_stream(struct v4l2_subdev *sd, int on)
+ 	if (on) {
+ 		if (sc3336->is_thunderboot && rkisp_tb_get_state() == RKISP_TB_NG) {
+ 			sc3336->is_thunderboot = false;
+-			__sc3336_power_on(sc3336);
++			ret = __sc3336_power_on(sc3336);
++			if (ret)
++				goto unlock_and_return;
+ 		}
+ 		ret = pm_runtime_get_sync(&client->dev);
+ 		if (ret < 0) {
+ 			pm_runtime_put_noidle(&client->dev);
+ 			goto unlock_and_return;
+ 		}
++		start_ns = ktime_get_ns();
+ 		ret = __sc3336_start_stream(sc3336);
++		sc3336->last_stream_start_us =
++			div_u64(ktime_get_ns() - start_ns, NSEC_PER_USEC);
+ 		if (ret) {
+ 			v4l2_err(sd, "start stream failed while write regs\n");
+ 			pm_runtime_put(&client->dev);
+ 			goto unlock_and_return;
+ 		}
++		sc3336->streaming = true;
+ 	} else {
+-		__sc3336_stop_stream(sc3336);
++		ret = __sc3336_stop_stream(sc3336);
+ 		pm_runtime_put(&client->dev);
++		if (ret)
++			goto unlock_and_return;
++		sc3336->streaming = false;
+ 	}
+-
+-	sc3336->streaming = on;
+ unlock_and_return:
+ 	mutex_unlock(&sc3336->mutex);
+ 	return ret;
+@@ -1103,7 +1159,7 @@ static int sc3336_s_power(struct v4l2_subdev *sd, int on)
+ 			ret = sc3336_write_array(sc3336->client, sc3336_global_regs);
+ 			if (ret) {
+ 				v4l2_err(sd, "could not set init registers\n");
+-				pm_runtime_put_noidle(&client->dev);
++				pm_runtime_put(&client->dev);
+ 				goto unlock_and_return;
+ 			}
+ 		}
+@@ -1320,6 +1376,56 @@ static void sc3336_modify_fps_info(struct sc3336 *sc3336)
+ 				      sc3336->cur_vts;
+ }
+ 
++static int sc3336_debugfs_stats_show(struct seq_file *s, void *data)
++{
++	struct sc3336 *sc3336 = s->private;
++
++	mutex_lock(&sc3336->mutex);
++	seq_printf(s, "i2c_reads: %llu\n",
++		   (unsigned long long)sc3336->i2c_read_count);
++	seq_printf(s, "i2c_writes: %llu\n",
++		   (unsigned long long)sc3336->i2c_write_count);
++	seq_printf(s, "i2c_errors: %llu\n",
++		   (unsigned long long)sc3336->i2c_error_count);
++	seq_printf(s, "last_i2c_error: %d\n", sc3336->last_i2c_error);
++	seq_printf(s, "last_stream_start_us: %u\n",
++		   sc3336->last_stream_start_us);
++	seq_printf(s, "streaming: %u\n", sc3336->streaming);
++	mutex_unlock(&sc3336->mutex);
++
++	return 0;
++}
++
++static int sc3336_debugfs_stats_open(struct inode *inode, struct file *file)
++{
++	return single_open(file, sc3336_debugfs_stats_show, inode->i_private);
++}
++
++static const struct file_operations sc3336_debugfs_stats_fops = {
++	.owner = THIS_MODULE,
++	.open = sc3336_debugfs_stats_open,
++	.read = seq_read,
++	.llseek = seq_lseek,
++	.release = single_release,
++};
++
++static void sc3336_debugfs_init(struct sc3336 *sc3336)
++{
++	char *name;
++
++	name = devm_kasprintf(&sc3336->client->dev, GFP_KERNEL, "%s-%s",
++			      SC3336_NAME, dev_name(&sc3336->client->dev));
++	if (!name)
++		return;
++
++	sc3336->debugfs_dir = debugfs_create_dir(name, NULL);
++	if (IS_ERR_OR_NULL(sc3336->debugfs_dir))
++		return;
++
++	debugfs_create_file("stats", 0444, sc3336->debugfs_dir, sc3336,
++			    &sc3336_debugfs_stats_fops);
++}
++
+ static int sc3336_set_ctrl(struct v4l2_ctrl *ctrl)
+ {
+ 	struct sc3336 *sc3336 = container_of(ctrl->handler,
+@@ -1354,14 +1460,18 @@ static int sc3336_set_ctrl(struct v4l2_ctrl *ctrl)
+ 						SC3336_REG_EXPOSURE_H,
+ 						SC3336_REG_VALUE_08BIT,
+ 						SC3336_FETCH_EXP_H(val));
+-			ret |= sc3336_write_reg(sc3336->client,
+-						 SC3336_REG_EXPOSURE_M,
+-						 SC3336_REG_VALUE_08BIT,
+-						 SC3336_FETCH_EXP_M(val));
+-			ret |= sc3336_write_reg(sc3336->client,
+-						 SC3336_REG_EXPOSURE_L,
+-						 SC3336_REG_VALUE_08BIT,
+-						 SC3336_FETCH_EXP_L(val));
++			if (ret)
++				break;
++			ret = sc3336_write_reg(sc3336->client,
++					       SC3336_REG_EXPOSURE_M,
++						SC3336_REG_VALUE_08BIT,
++						SC3336_FETCH_EXP_M(val));
++			if (ret)
++				break;
++			ret = sc3336_write_reg(sc3336->client,
++					       SC3336_REG_EXPOSURE_L,
++						SC3336_REG_VALUE_08BIT,
++						SC3336_FETCH_EXP_L(val));
+ 		}
+ 		break;
+ 	case V4L2_CID_ANALOGUE_GAIN:
+@@ -1376,13 +1486,17 @@ static int sc3336_set_ctrl(struct v4l2_ctrl *ctrl)
+ 					SC3336_REG_VALUE_08BIT,
+ 					(ctrl->val + sc3336->cur_mode->height)
+ 					>> 8);
+-		ret |= sc3336_write_reg(sc3336->client,
+-					 SC3336_REG_VTS_L,
+-					 SC3336_REG_VALUE_08BIT,
+-					 (ctrl->val + sc3336->cur_mode->height)
+-					 & 0xff);
+-		sc3336->cur_vts = ctrl->val + sc3336->cur_mode->height;
+-		sc3336_modify_fps_info(sc3336);
++		if (ret)
++			break;
++		ret = sc3336_write_reg(sc3336->client,
++				       SC3336_REG_VTS_L,
++					SC3336_REG_VALUE_08BIT,
++					(ctrl->val + sc3336->cur_mode->height)
++					& 0xff);
++		if (!ret) {
++			sc3336->cur_vts = ctrl->val + sc3336->cur_mode->height;
++			sc3336_modify_fps_info(sc3336);
++		}
+ 		break;
+ 	case V4L2_CID_TEST_PATTERN:
+ 		ret = sc3336_enable_test_pattern(sc3336, ctrl->val);
+@@ -1390,16 +1504,20 @@ static int sc3336_set_ctrl(struct v4l2_ctrl *ctrl)
+ 	case V4L2_CID_HFLIP:
+ 		ret = sc3336_read_reg(sc3336->client, SC3336_FLIP_MIRROR_REG,
+ 				       SC3336_REG_VALUE_08BIT, &val);
+-		ret |= sc3336_write_reg(sc3336->client, SC3336_FLIP_MIRROR_REG,
+-					 SC3336_REG_VALUE_08BIT,
+-					 SC3336_FETCH_MIRROR(val, ctrl->val));
++		if (ret)
++			break;
++		ret = sc3336_write_reg(sc3336->client, SC3336_FLIP_MIRROR_REG,
++				       SC3336_REG_VALUE_08BIT,
++					SC3336_FETCH_MIRROR(val, ctrl->val));
+ 		break;
+ 	case V4L2_CID_VFLIP:
+ 		ret = sc3336_read_reg(sc3336->client, SC3336_FLIP_MIRROR_REG,
+ 				       SC3336_REG_VALUE_08BIT, &val);
+-		ret |= sc3336_write_reg(sc3336->client, SC3336_FLIP_MIRROR_REG,
+-					 SC3336_REG_VALUE_08BIT,
+-					 SC3336_FETCH_FLIP(val, ctrl->val));
++		if (ret)
++			break;
++		ret = sc3336_write_reg(sc3336->client, SC3336_FLIP_MIRROR_REG,
++				       SC3336_REG_VALUE_08BIT,
++					SC3336_FETCH_FLIP(val, ctrl->val));
+ 		break;
+ 	default:
+ 		dev_warn(&client->dev, "%s Unhandled id:0x%x, val:0x%x\n",
+@@ -1665,6 +1783,7 @@ static int sc3336_probe(struct i2c_client *client,
+ 	pm_runtime_set_active(dev);
+ 	pm_runtime_enable(dev);
+ 	pm_runtime_idle(dev);
++	sc3336_debugfs_init(sc3336);
+ 
+ 	return 0;
+ 
+@@ -1692,6 +1811,7 @@ static int sc3336_remove(struct i2c_client *client)
+ 	media_entity_cleanup(&sd->entity);
+ #endif
+ 	v4l2_ctrl_handler_free(&sc3336->ctrl_handler);
++	debugfs_remove_recursive(sc3336->debugfs_dir);
+ 	mutex_destroy(&sc3336->mutex);
+ 
+ 	pm_runtime_disable(&client->dev);
+-- 
+2.34.1
+
