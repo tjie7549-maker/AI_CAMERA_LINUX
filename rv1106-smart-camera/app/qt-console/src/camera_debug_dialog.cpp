@@ -117,7 +117,7 @@ CameraDebugDialog::CameraDebugDialog(DaemonClient *client, QWidget *parent)
         "QTabWidget::pane{border:1px solid #344351;background:#17212b;} QTabBar::tab{background:#202d38;color:#aebcc6;min-width:104px;padding:9px 5px;font-size:16px;} QTabBar::tab:selected{background:#2b596b;color:#f2f7fa;font-weight:700;}"
         "QCheckBox{font-size:18px;color:#edf2f5;padding:8px;} QCheckBox::indicator{width:26px;height:26px;border:1px solid #7d99a8;background:#0f171e;} QCheckBox::indicator:checked{background:#28a9c0;border-color:#a5f1f8;}"
         "QPushButton#controlRow{background:#14232d;border:1px solid #416b7d;border-radius:5px;color:#eef6f8;text-align:left;padding:8px 16px;font-size:18px;font-weight:700;} QPushButton#controlRow:pressed{background:#1e4350;border-color:#72d8e5;} QPushButton#controlRow:disabled{background:#172027;border-color:#303d46;color:#82909a;}"
-        "QPushButton#restoreDefaults{background:#513a32;border:1px solid #d48768;border-radius:5px;color:#fff0e9;font-size:18px;font-weight:700;padding:8px;} QPushButton#restoreDefaults:pressed{background:#76483b;}"
+        "QPushButton#restoreDefaults{background:#513a32;border:1px solid #d48768;border-radius:5px;color:#fff0e9;font-size:18px;font-weight:700;padding:8px;} QPushButton#restoreDefaults:pressed{background:#76483b;} QPushButton#restoreDefaults:disabled{background:#252d34;border-color:#3b4650;color:#7b8992;}"
         "QPushButton#modeButton{background:#176276;border:1px solid #71dcea;border-radius:5px;color:#effcff;font-size:18px;font-weight:700;padding:8px;} QPushButton#modeButton:pressed{background:#124959;}"
         "QTextEdit{background:#0f171e;color:#cbd8df;border:1px solid #344351;font-size:15px;}"));
 
@@ -152,7 +152,7 @@ CameraDebugDialog::CameraDebugDialog(DaemonClient *client, QWidget *parent)
     addControl(listLayout, QStringLiteral("垂直翻转（0/1）"), QStringLiteral("vflip"), 0, 1);
     addControl(listLayout, QStringLiteral("测试图（0=关闭）"), QStringLiteral("test_pattern"), 0, 4);
     listLayout->addStretch(); scroll->setWidget(controlList); controlLayout->addWidget(scroll, 1);
-    restoreDefaults_ = new QPushButton(QStringLiteral("恢复进入页时的自动参数"), controlPage); restoreDefaults_->setObjectName(QStringLiteral("restoreDefaults")); restoreDefaults_->setFixedHeight(48);
+    restoreDefaults_ = new QPushButton(QStringLiteral("恢复进入页时的自动参数"), controlPage); restoreDefaults_->setObjectName(QStringLiteral("restoreDefaults")); restoreDefaults_->setFixedHeight(48); restoreDefaults_->setEnabled(false); restoreDefaults_->setToolTip(QStringLiteral("进入参数调节后才能恢复自动参数快照"));
     connect(restoreDefaults_, &QPushButton::clicked, this, &CameraDebugDialog::restoreDefaults); controlLayout->addWidget(restoreDefaults_);
     tabs->addTab(controlPage, QStringLiteral("参数调节"));
 
