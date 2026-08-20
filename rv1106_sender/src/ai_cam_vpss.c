@@ -16,7 +16,6 @@ int ai_cam_vpss_start(AiCamApp *app) {
 	bool encode_enabled = false;
 	bool sub_encode_enabled = false;
 	bool preview_enabled = false;
-	bool face_enabled = false;
 	int ret;
 
 	crop_size &= ~1;
@@ -147,36 +146,6 @@ int ai_cam_vpss_start(AiCamApp *app) {
 			goto failed;
 		preview_enabled = true;
 	}
-	if (app->config.face_snapshot_socket) {
-		memset(&crop, 0, sizeof(crop));
-		crop.bEnable = RK_TRUE;
-		crop.enCropCoordinate = VPSS_CROP_ABS_COOR;
-		crop.stCropRect.s32X = crop_x;
-		crop.stCropRect.s32Y = crop_y;
-		crop.stCropRect.u32Width = crop_size;
-		crop.stCropRect.u32Height = crop_size;
-		ret = RK_MPI_VPSS_SetChnCrop(AI_CAM_VPSS_GRP, AI_CAM_VPSS_FACE_CHN, &crop);
-		if (ret != RK_SUCCESS)
-			goto failed;
-		memset(&chn_attr, 0, sizeof(chn_attr));
-		chn_attr.enChnMode = VPSS_CHN_MODE_USER;
-		chn_attr.enDynamicRange = DYNAMIC_RANGE_SDR8;
-		chn_attr.enPixelFormat = RK_FMT_YUV420SP;
-		chn_attr.stFrameRate.s32SrcFrameRate = -1;
-		chn_attr.stFrameRate.s32DstFrameRate = 5;
-		chn_attr.u32Width = app->config.face_width;
-		chn_attr.u32Height = app->config.face_height;
-		chn_attr.enCompressMode = COMPRESS_MODE_NONE;
-		chn_attr.u32Depth = 1;
-		chn_attr.u32FrameBufCnt = 2;
-		ret = RK_MPI_VPSS_SetChnAttr(AI_CAM_VPSS_GRP, AI_CAM_VPSS_FACE_CHN, &chn_attr);
-		if (ret != RK_SUCCESS)
-			goto failed;
-		ret = RK_MPI_VPSS_EnableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_FACE_CHN);
-		if (ret != RK_SUCCESS)
-			goto failed;
-		face_enabled = true;
-	}
 	ret = RK_MPI_VPSS_StartGrp(AI_CAM_VPSS_GRP);
 	if (ret != RK_SUCCESS)
 		goto failed;
@@ -192,15 +161,10 @@ int ai_cam_vpss_start(AiCamApp *app) {
 		printf("#VPSS preview: ch%d scale %dx%d NV12 at %d FPS\n",
 		       AI_CAM_VPSS_PREVIEW_CHN, app->config.preview_width,
 		       app->config.preview_height, app->config.preview_fps);
-	if (app->config.face_snapshot_socket)
-		printf("#VPSS face capture: ch%d center crop -> %dx%d NV12 on demand\n",
-		       AI_CAM_VPSS_FACE_CHN, app->config.face_width, app->config.face_height);
 	app->vpss_initialized = true;
 	return RK_SUCCESS;
 
 failed:
-	if (face_enabled)
-		RK_MPI_VPSS_DisableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_FACE_CHN);
 	if (preview_enabled)
 		RK_MPI_VPSS_DisableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_PREVIEW_CHN);
 	if (sub_encode_enabled)
@@ -223,8 +187,6 @@ void ai_cam_vpss_stop(AiCamApp *app) {
 	RK_MPI_VPSS_DisableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_ENCODE_CHN);
 	if (app->config.preview_shm_name)
 		RK_MPI_VPSS_DisableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_PREVIEW_CHN);
-	if (app->config.face_snapshot_socket)
-		RK_MPI_VPSS_DisableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_FACE_CHN);
 	if (app->config.enable_vo)
 		RK_MPI_VPSS_DisableChn(AI_CAM_VPSS_GRP, AI_CAM_VPSS_DISPLAY_CHN);
 	RK_MPI_VPSS_DestroyGrp(AI_CAM_VPSS_GRP);

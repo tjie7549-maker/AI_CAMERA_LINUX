@@ -199,9 +199,6 @@ void ai_cam_default_config(AiCamConfig *config) {
 	config->preview_width = 384;
 	config->preview_height = 216;
 	config->preview_fps = 15;
-	config->face_width = 720;
-	config->face_height = 720;
-	config->isp_control_socket = "/tmp/rv1106_isp_control.sock";
 }
 
 void ai_cam_request_stop(AiCamApp *app) {
@@ -235,8 +232,6 @@ int ai_cam_start(AiCamApp *app) {
 	ret = ai_cam_venc_bind_vpss(app);
 	if (ret != RK_SUCCESS)
 		goto failed;
-	/* Headless smart-camera mode uses port 8554 inside ai_cam_rtsp_start(),
-	 * preserving both streams without colliding with the BSP's port 554. */
 	ret = ai_cam_rtsp_start(app);
 	if (ret != RK_SUCCESS)
 		goto failed;
@@ -260,11 +255,6 @@ int ai_cam_start(AiCamApp *app) {
 	app->forwarding_thread_started = true;
 	if (app->config.preview_shm_name) {
 		ret = ai_cam_preview_start(app);
-		if (ret != RK_SUCCESS)
-			goto failed;
-	}
-	if (app->config.face_snapshot_socket) {
-		ret = ai_cam_face_snapshot_start(app);
 		if (ret != RK_SUCCESS)
 			goto failed;
 	}
@@ -301,10 +291,6 @@ void ai_cam_stop(AiCamApp *app) {
 	if (app->preview_initialized) {
 		ai_cam_shutdown_checkpoint("stop preview producer");
 		ai_cam_preview_stop(app);
-	}
-	if (app->face_snapshot_thread_started) {
-		ai_cam_shutdown_checkpoint("stop face snapshot service");
-		ai_cam_face_snapshot_stop(app);
 	}
 	if (app->venc_thread_started) {
 		ai_cam_shutdown_checkpoint("join main VENC thread");
