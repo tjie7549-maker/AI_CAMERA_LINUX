@@ -11,12 +11,40 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QTabWidget>
 #include <QTextEdit>
+#include <QTextDocument>
+#include <QTime>
 #include <QTimer>
 #include <QVBoxLayout>
 
 namespace {
+void appendLogEntry(QTextEdit *target, const QString &title, const QString &detail,
+                    bool warning = false)
+{
+    const QString color = warning ? QStringLiteral("#ff9b8f") : QStringLiteral("#59d4e7");
+    const QString escaped = detail.toHtmlEscaped().replace('\n', QStringLiteral("<br>"));
+    target->append(QStringLiteral(
+        "<div style=\"margin:5px 2px 10px 2px;padding:8px 10px;"
+        "border-left:4px solid %1;background:#16212a;line-height:1.45;\">"
+        "<span style=\"color:%1;font-size:15px;font-weight:700;\">%2</span>"
+        "<span style=\"color:#8095a3;font-size:13px;\">　%3</span><br>"
+        "<span style=\"color:#dbe7ed;font-size:15px;\">%4</span></div>")
+        .arg(color, title.toHtmlEscaped(),
+             QTime::currentTime().toString(QStringLiteral("HH:mm:ss")), escaped));
+    target->verticalScrollBar()->setValue(target->verticalScrollBar()->maximum());
+}
+
+QString readableState(const QString &state)
+{
+    if (state == QStringLiteral("NORMAL")) return QStringLiteral("正常");
+    if (state == QStringLiteral("LOW_LIGHT")) return QStringLiteral("低照度策略");
+    if (state == QStringLiteral("RECOVERING")) return QStringLiteral("恢复中");
+    if (state == QStringLiteral("ERROR")) return QStringLiteral("异常");
+    return state.isEmpty() ? QStringLiteral("未知") : state;
+}
+
 class NumericKeypadDialog : public QDialog {
 public:
     NumericKeypadDialog(const QString &title, int current, int minimum, int maximum, QWidget *parent)
@@ -91,7 +119,7 @@ CameraDebugDialog::CameraDebugDialog(DaemonClient *client, QWidget *parent)
         "QPushButton#controlRow{background:#14232d;border:1px solid #416b7d;border-radius:5px;color:#eef6f8;text-align:left;padding:8px 16px;font-size:18px;font-weight:700;} QPushButton#controlRow:pressed{background:#1e4350;border-color:#72d8e5;} QPushButton#controlRow:disabled{background:#172027;border-color:#303d46;color:#82909a;}"
         "QPushButton#restoreDefaults{background:#513a32;border:1px solid #d48768;border-radius:5px;color:#fff0e9;font-size:18px;font-weight:700;padding:8px;} QPushButton#restoreDefaults:pressed{background:#76483b;}"
         "QPushButton#modeButton{background:#176276;border:1px solid #71dcea;border-radius:5px;color:#effcff;font-size:18px;font-weight:700;padding:8px;} QPushButton#modeButton:pressed{background:#124959;}"
-        "QTextEdit{background:#0f171e;color:#cbd8df;border:1px solid #344351;font-size:14px;}"));
+        "QTextEdit{background:#0f171e;color:#cbd8df;border:1px solid #344351;font-size:15px;}"));
 
     auto *root = new QVBoxLayout(this); root->setContentsMargins(14, 14, 14, 14); root->setSpacing(9);
     auto *header = new QFrame(this); header->setObjectName(QStringLiteral("debugHeader")); header->setFixedHeight(60);
@@ -130,7 +158,7 @@ CameraDebugDialog::CameraDebugDialog(DaemonClient *client, QWidget *parent)
 
     auto *driverPage = new QWidget(tabs); auto *driverLayout = new QVBoxLayout(driverPage); driverLayout->setContentsMargins(18, 18, 18, 18);
     auto *driverInfo = new QLabel(QStringLiteral("SC3336 驱动统计会在 debugfs 补丁刷写后显示。\n这里不伪造 I2C 失败数或启动耗时。"), driverPage); driverInfo->setObjectName(QStringLiteral("debugValue")); driverInfo->setWordWrap(true); driverLayout->addWidget(driverInfo); driverLayout->addStretch(); tabs->addTab(driverPage, QStringLiteral("驱动"));
-    auto *eventsPage = new QWidget(tabs); auto *eventsLayout = new QVBoxLayout(eventsPage); eventsLayout->setContentsMargins(13, 13, 13, 13); events_->setReadOnly(true); events_->setPlaceholderText(QStringLiteral("等待 daemon 状态和事件…")); eventsLayout->addWidget(events_); tabs->addTab(eventsPage, QStringLiteral("日志"));
+    auto *eventsPage = new QWidget(tabs); auto *eventsLayout = new QVBoxLayout(eventsPage); eventsLayout->setContentsMargins(13, 13, 13, 13); events_->setReadOnly(true); events_->setPlaceholderText(QStringLiteral("等待相机状态…")); events_->document()->setMaximumBlockCount(80); eventsLayout->addWidget(events_); tabs->addTab(eventsPage, QStringLiteral("运行日志"));
     error_->setObjectName(QStringLiteral("debugError")); error_->setWordWrap(true); error_->setMinimumHeight(24); root->addWidget(error_);
 
     connect(autoAe_, &QCheckBox::toggled, client_, &DaemonClient::setAutoAe);
@@ -196,11 +224,24 @@ void CameraDebugDialog::updateStatus(const QString &json)
         driver_->setText(QStringLiteral("请先启动摄像头管线。当前值为驱动回读，不会伪造控制结果。"));
         error_->setText(QStringLiteral("未检测到 camera pipeline；请确认预览已启动。"));
     }
-    events_->append(QStringLiteral("状态更新：%1").arg(json));
+    const QString mode = debugActive_ ? QStringLiteral("参数调节") : QStringLiteral("展示预览");
+    const QString aeText = ae ? QStringLiteral("自动") : QStringLiteral("手动");
+    const QString detail = QStringLiteral("模式：%1　AE/AGC：%2　策略：%3\n"
+                                          "曝光：%4 行　增益：%5　VBLANK：%6\n"
+                                          "管线 PID：%7　NPU PID：%8　异常计数：%9")
+                               .arg(mode, aeText, readableState(policy))
+                               .arg(values.value(QStringLiteral("exposure")).toInt(-1))
+                               .arg(values.value(QStringLiteral("analogue_gain")).toInt(-1))
+                               .arg(values.value(QStringLiteral("vblank")).toInt(-1))
+                               .arg(pipelinePid)
+                               .arg(o.value(QStringLiteral("npu_pid")).toInt(-1))
+                               .arg(o.value(QStringLiteral("failures")).toInt());
+    appendLogEntry(events_, pipelinePid > 0 ? QStringLiteral("状态已同步") : QStringLiteral("媒体链路异常"),
+                   detail, pipelinePid <= 0 || policy == QStringLiteral("ERROR"));
 }
 
 void CameraDebugDialog::showDaemonError(const QString &message)
 {
     restoreDefaults_->setEnabled(debugActive_); if (!restoreConfirm_) restoreDefaults_->setText(QStringLiteral("恢复进入页时的自动参数"));
-    error_->setText(message); events_->append(QStringLiteral("错误：%1").arg(message));
+    error_->setText(message); appendLogEntry(events_, QStringLiteral("操作失败"), message, true);
 }
