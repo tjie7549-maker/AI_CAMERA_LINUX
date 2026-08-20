@@ -124,7 +124,7 @@ CameraDebugDialog::CameraDebugDialog(DaemonClient *client, QWidget *parent)
     addControl(listLayout, QStringLiteral("垂直翻转（0/1）"), QStringLiteral("vflip"), 0, 1);
     addControl(listLayout, QStringLiteral("测试图（0=关闭）"), QStringLiteral("test_pattern"), 0, 4);
     listLayout->addStretch(); scroll->setWidget(controlList); controlLayout->addWidget(scroll, 1);
-    restoreDefaults_ = new QPushButton(QStringLiteral("恢复手动安全基线（关闭自动 AE）"), controlPage); restoreDefaults_->setObjectName(QStringLiteral("restoreDefaults")); restoreDefaults_->setFixedHeight(48);
+    restoreDefaults_ = new QPushButton(QStringLiteral("恢复进入页时的自动参数"), controlPage); restoreDefaults_->setObjectName(QStringLiteral("restoreDefaults")); restoreDefaults_->setFixedHeight(48);
     connect(restoreDefaults_, &QPushButton::clicked, this, &CameraDebugDialog::restoreDefaults); controlLayout->addWidget(restoreDefaults_);
     tabs->addTab(controlPage, QStringLiteral("参数调节"));
 
@@ -160,8 +160,8 @@ void CameraDebugDialog::editControl(const QString &id)
 void CameraDebugDialog::restoreDefaults()
 {
     if (!restoreConfirm_) {
-        restoreConfirm_ = true; restoreDefaults_->setText(QStringLiteral("再次点按确认：恢复手动基线"));
-        QTimer::singleShot(3000, this, [this]() { if (restoreConfirm_) { restoreConfirm_ = false; restoreDefaults_->setText(QStringLiteral("恢复手动安全基线（关闭自动 AE）")); } });
+        restoreConfirm_ = true; restoreDefaults_->setText(QStringLiteral("再次点按确认：恢复自动快照"));
+        QTimer::singleShot(3000, this, [this]() { if (restoreConfirm_) { restoreConfirm_ = false; restoreDefaults_->setText(QStringLiteral("恢复进入页时的自动参数")); } });
         return;
     }
     restoreConfirm_ = false; restoreDefaults_->setText(QStringLiteral("恢复中…")); restoreDefaults_->setEnabled(false); client_->restoreDefaults();
@@ -182,7 +182,7 @@ void CameraDebugDialog::updateStatus(const QString &json)
         it.value()->setEnabled(!locked); it.value()->setProperty("controlValue", value);
         it.value()->setText(controlTitles_.value(it.key()) + QStringLiteral("\n当前值：%1%2").arg(value < 0 ? QStringLiteral("读取失败") : QString::number(value)).arg(debugActive_ ? QStringLiteral("    点按输入") : QStringLiteral("    展示模式只读")));
     }
-    restoreDefaults_->setEnabled(debugActive_); if (!restoreConfirm_) restoreDefaults_->setText(QStringLiteral("恢复手动安全基线（关闭自动 AE）"));
+    restoreDefaults_->setEnabled(debugActive_); if (!restoreConfirm_) restoreDefaults_->setText(QStringLiteral("恢复进入页时的自动参数"));
     const int pipelinePid = o.value(QStringLiteral("pipeline_pid")).toInt(-1); const QString policy = o.value(QStringLiteral("state")).toString(QStringLiteral("未知"));
     if (pipelinePid > 0) {
         overview_->setText(debugActive_ ? QStringLiteral("● 参数调节模式：项目管线独占 SC3336") : QStringLiteral("● 展示模式：项目本地预览与 AI 正在供流"));
@@ -201,6 +201,6 @@ void CameraDebugDialog::updateStatus(const QString &json)
 
 void CameraDebugDialog::showDaemonError(const QString &message)
 {
-    restoreDefaults_->setEnabled(debugActive_); if (!restoreConfirm_) restoreDefaults_->setText(QStringLiteral("恢复手动安全基线（关闭自动 AE）"));
+    restoreDefaults_->setEnabled(debugActive_); if (!restoreConfirm_) restoreDefaults_->setText(QStringLiteral("恢复进入页时的自动参数"));
     error_->setText(message); events_->append(QStringLiteral("错误：%1").arg(message));
 }

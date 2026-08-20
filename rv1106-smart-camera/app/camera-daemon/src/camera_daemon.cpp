@@ -43,8 +43,12 @@ struct CameraDaemon::Impl {
    * owns AE it is not a reliable source for the last manual request, so keep
    * the accepted setpoints here and use them for subsequent transactions. */
   int manual_exposure, manual_gain;
+  /* Snapshot taken while automatic AE/AGC still owns the sensor.  This is the
+   * user's real "restore defaults" profile for the current demo session, not
+   * a hard-coded dark calibration value. */
+  int baseline_exposure, baseline_gain, baseline_vblank, baseline_hflip, baseline_vflip, baseline_test_pattern;
   int failures, dark_frames, bright_frames; long long restart_at, npu_start_at; std::string state, last_error, mode;
-  Impl(const DaemonConfig& x):c(x),server_fd(-1),sender_pid(-1),npu_pid(-1),rkipc_pid(-1),running(true),npu_started_once(false),manual_restart_pending(false),manual_exposure(x.default_exposure),manual_gain(x.default_analogue_gain),failures(0),dark_frames(0),bright_frames(0),restart_at(0),npu_start_at(0),state("NORMAL"),mode("DISPLAY") {}
+  Impl(const DaemonConfig& x):c(x),server_fd(-1),sender_pid(-1),npu_pid(-1),rkipc_pid(-1),running(true),npu_started_once(false),manual_restart_pending(false),manual_exposure(x.default_exposure),manual_gain(x.default_analogue_gain),baseline_exposure(x.default_exposure),baseline_gain(x.default_analogue_gain),baseline_vblank(x.default_vblank),baseline_hflip(x.default_hflip),baseline_vflip(x.default_vflip),baseline_test_pattern(x.default_test_pattern),failures(0),dark_frames(0),bright_frames(0),restart_at(0),npu_start_at(0),state("NORMAL"),mode("DISPLAY") {}
   void event(const char* type, const std::string& detail) {
     mkdir_parent(c.log_path); int fd=open(c.log_path.c_str(),O_WRONLY|O_CREAT|O_APPEND,0644); if(fd<0)return;
     std::ostringstream o; o << "{\"monotonic_ms\":" << monotonic_ms() << ",\"type\":\"" << type << "\",\"state\":\"" << state << "\",\"detail\":\"" << json_escape(detail) << "\"}\n";
@@ -96,7 +100,22 @@ struct CameraDaemon::Impl {
   void start_npu_later() { npu_started_once=false; npu_start_at=c.start_npu ? monotonic_ms()+1500 : 0; }
   bool start_capture() { return spawn(capture_path(),true); }
   void stop_capture() { kill_child(&sender_pid); kill_child(&npu_pid); npu_started_once=false; npu_start_at=0; restart_at=0; }
+  void snapshot_auto_baseline() {
+    const int exposure=read_control(V4L2_CID_EXPOSURE), gain=read_control(V4L2_CID_ANALOGUE_GAIN);
+    const int vblank=read_control(V4L2_CID_VBLANK), hflip=read_control(V4L2_CID_HFLIP);
+    const int vflip=read_control(V4L2_CID_VFLIP), test_pattern=read_control(V4L2_CID_TEST_PATTERN);
+    if(exposure>=1) baseline_exposure=exposure;
+    if(gain>=128) baseline_gain=gain;
+    if(vblank>=0) baseline_vblank=vblank;
+    if(hflip>=0) baseline_hflip=hflip;
+    if(vflip>=0) baseline_vflip=vflip;
+    if(test_pattern>=0) baseline_test_pattern=test_pattern;
+    manual_exposure=baseline_exposure;
+    manual_gain=baseline_gain;
+    event("auto_baseline_saved","exposure="+std::to_string(baseline_exposure)+", gain="+std::to_string(baseline_gain));
+  }
   bool enter_debug() {
+    if(c.auto_ae) snapshot_auto_baseline();
     mode="DEBUG";
     event("debug_entered","native RKAIQ/SC3336 diagnostic mode");
     return true;
@@ -203,9 +222,9 @@ struct CameraDaemon::Impl {
     if(mode!="DEBUG") { last_error="恢复默认参数仅在驱动调试模式可用"; return false; }
     const __u32 ids[] = {V4L2_CID_EXPOSURE, V4L2_CID_ANALOGUE_GAIN, V4L2_CID_VBLANK,
                          V4L2_CID_HFLIP, V4L2_CID_VFLIP, V4L2_CID_TEST_PATTERN};
-    const int values[] = {c.default_exposure, c.default_analogue_gain, c.default_vblank,
-                          c.default_hflip, c.default_vflip, c.default_test_pattern};
-    if(!isp("manual "+std::to_string(c.default_exposure)+" "+std::to_string(c.default_analogue_gain)+"\n")) return false;
+    const int values[] = {baseline_exposure, baseline_gain, baseline_vblank,
+                          baseline_hflip, baseline_vflip, baseline_test_pattern};
+    if(!isp("manual "+std::to_string(baseline_exposure)+" "+std::to_string(baseline_gain)+"\n")) return false;
     int fd=open(c.sensor_subdev.c_str(),O_RDWR);
     if(fd<0){last_error="open sensor failed: "+std::string(strerror(errno));return false;}
     for(size_t i=0;i<sizeof(ids)/sizeof(ids[0]);++i) {
@@ -213,7 +232,7 @@ struct CameraDaemon::Impl {
       struct v4l2_control ctl; memset(&ctl,0,sizeof(ctl)); ctl.id=ids[i]; ctl.value=values[i];
       if(ioctl(fd,VIDIOC_S_CTRL,&ctl)<0) { close(fd); last_error="restore default failed: "+std::string(strerror(errno)); return false; }
     }
-    close(fd); manual_exposure=c.default_exposure; manual_gain=c.default_analogue_gain; c.auto_ae=false; last_error.clear(); event("controls_restored","fixed SC3336 defaults, auto_ae=false"); return true;
+    close(fd); manual_exposure=baseline_exposure; manual_gain=baseline_gain; c.auto_ae=false; last_error.clear(); event("controls_restored","captured automatic baseline, auto_ae=false"); return true;
   }
   int read_control(__u32 cid) const {
     int fd=open(c.sensor_subdev.c_str(),O_RDONLY);
@@ -270,7 +289,7 @@ std::string CameraDaemon::handle(const std::string& r) {
     impl_->event("restart_requested","");
     return "{\"ok\":true}";
   }
-  if(cmd=="set_auto_ae"){if(impl_->mode!="DEBUG")return "{\"ok\":false,\"error\":\"请先进入驱动调试模式\"}";bool x;if(!bool_field(r,"auto_ae",&x))return "{\"ok\":false,\"error\":\"missing auto_ae\"}";int exposure=impl_->manual_exposure>=1?impl_->manual_exposure:impl_->c.default_exposure;int gain=impl_->manual_gain>=128?impl_->manual_gain:impl_->c.default_analogue_gain;bool ok=x?impl_->isp("auto\n"):impl_->isp("manual "+std::to_string(exposure)+" "+std::to_string(gain)+"\n");if(!ok)return "{\"ok\":false,\"error\":\""+json_escape(impl_->last_error)+"\"}";impl_->c.auto_ae=x;impl_->event("ae_mode",x?"auto":"manual");return impl_->status();}
+  if(cmd=="set_auto_ae"){if(impl_->mode!="DEBUG")return "{\"ok\":false,\"error\":\"请先进入驱动调试模式\"}";bool x;if(!bool_field(r,"auto_ae",&x))return "{\"ok\":false,\"error\":\"missing auto_ae\"}";if(!x&&impl_->c.auto_ae)impl_->snapshot_auto_baseline();int exposure=impl_->manual_exposure>=1?impl_->manual_exposure:impl_->baseline_exposure;int gain=impl_->manual_gain>=128?impl_->manual_gain:impl_->baseline_gain;bool ok=x?impl_->isp("auto\n"):impl_->isp("manual "+std::to_string(exposure)+" "+std::to_string(gain)+"\n");if(!ok)return "{\"ok\":false,\"error\":\""+json_escape(impl_->last_error)+"\"}";impl_->c.auto_ae=x;impl_->event("ae_mode",x?"auto":"manual");return impl_->status();}
   if(cmd=="set_control"){std::string id;double v;if(!field(r,"id",&id)||!number_field(r,"value",&v))return "{\"ok\":false,\"error\":\"id/value required\"}";return impl_->control(id,(int)v)?"{\"ok\":true}":"{\"ok\":false,\"error\":\""+json_escape(impl_->last_error)+"\"}";}
   if(cmd=="restore_defaults")return impl_->restore_defaults()?impl_->status():"{\"ok\":false,\"error\":\""+json_escape(impl_->last_error)+"\"}";
   if(cmd=="report_metrics"){double luma=0,lat=0;bool stream=true;number_field(r,"luma",&luma);number_field(r,"npu_latency_ms",&lat);bool_field(r,"stream_ok",&stream);if(!stream){++impl_->failures;} if(luma<impl_->c.low_light_luma){++impl_->dark_frames;impl_->bright_frames=0;if(impl_->dark_frames>=impl_->c.low_light_frames&&impl_->state=="NORMAL"){impl_->state="LOW_LIGHT";impl_->event("low_light","threshold reached");}}else{++impl_->bright_frames;impl_->dark_frames=0;if(impl_->state=="LOW_LIGHT"&&impl_->bright_frames>=impl_->c.recover_frames){impl_->state="NORMAL";impl_->event("light_recovered","");}}if(lat>impl_->c.npu_latency_max_ms)impl_->event("npu_latency_high","threshold exceeded");return impl_->status();}
