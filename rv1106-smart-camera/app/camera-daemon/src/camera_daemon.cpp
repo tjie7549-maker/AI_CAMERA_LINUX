@@ -39,13 +39,12 @@ static void mkdir_parent(const std::string& path) { size_t p=0; while((p=path.fi
 
 struct CameraDaemon::Impl {
   DaemonConfig c; int server_fd; pid_t sender_pid, npu_pid, rkipc_pid; bool running, npu_started_once, manual_restart_pending;
-  /* V4L2 control readback is the sensor driver's cached state.  Once RKAIQ
-   * owns AE it is not a reliable source for the last manual request, so keep
-   * the accepted setpoints here and use them for subsequent transactions. */
+  /* V4L2 control 的回读值属于 sensor driver 缓存；RKAIQ 接管 AE 后，
+   * 它不能可靠代表最近一次手动设置。因此在 daemon 内保存已成功下发的
+   * 曝光/增益，后续修改其中一项时使用另一项的真实设定值。 */
   int manual_exposure, manual_gain;
-  /* Snapshot taken while automatic AE/AGC still owns the sensor.  This is the
-   * user's real "restore defaults" profile for the current demo session, not
-   * a hard-coded dark calibration value. */
+  /* 在自动 AE/AGC 仍控制 sensor 时抓取的快照。这才是本次演示会话的
+   * “恢复默认参数”，而不是写死的低亮度标定值。 */
   int baseline_exposure, baseline_gain, baseline_vblank, baseline_hflip, baseline_vflip, baseline_test_pattern;
   int failures, dark_frames, bright_frames; long long restart_at, npu_start_at; std::string state, last_error, mode;
   Impl(const DaemonConfig& x):c(x),server_fd(-1),sender_pid(-1),npu_pid(-1),rkipc_pid(-1),running(true),npu_started_once(false),manual_restart_pending(false),manual_exposure(x.default_exposure),manual_gain(x.default_analogue_gain),baseline_exposure(x.default_exposure),baseline_gain(x.default_analogue_gain),baseline_vblank(x.default_vblank),baseline_hflip(x.default_hflip),baseline_vflip(x.default_vflip),baseline_test_pattern(x.default_test_pattern),failures(0),dark_frames(0),bright_frames(0),restart_at(0),npu_start_at(0),state("NORMAL"),mode("DISPLAY") {}
@@ -91,8 +90,8 @@ struct CameraDaemon::Impl {
     for(int i=0;i<40;++i) { pid_t p=find_rkipc(); if(p<0){unlink(c.rkipc_socket.c_str());rkipc_pid=-1;event("rkipc_stopped","");return true;} kill(p,SIGTERM); usleep(100000); }
     event("rkipc_killed","SIGTERM timeout; sent SIGKILL to rkipc only");
     for(int i=0;i<30;++i) { pid_t p=find_rkipc(); if(p<0){unlink(c.rkipc_socket.c_str());rkipc_pid=-1;event("rkipc_stopped","");return true;} kill(p,SIGKILL); usleep(100000); }
-    /* Some firmware leaves a short-lived zombie entry in /proc after SIGKILL.
-     * The following RKAIQ-ready check is the authoritative ownership check. */
+    /* 部分固件在 SIGKILL 后会短暂保留 /proc 僵尸项；后续 RKAIQ 就绪检查
+     * 才是判断相机所有权是否真正释放的依据。 */
     unlink(c.rkipc_socket.c_str());
     event("rkipc_force_kill_pending","continuing to RKAIQ readiness check");
     return true;
@@ -122,10 +121,9 @@ struct CameraDaemon::Impl {
   }
   bool exit_debug() {
     if(mode=="DISPLAY")return true;
-    /* Leaving this page must not recycle media-sender.  Some RKAIQ builds
-     * reject AUTO after MANUAL AE; restarting then replaces the DMA-BUF
-     * preview while Qt still holds old FDs and makes the display go black.
-     * Automatic AE is therefore an explicit in-page operation. */
+    /* 返回预览页不能重启 media-sender。部分 RKAIQ 版本会拒绝从 MANUAL AE
+     * 切回 AUTO；旧逻辑会因此重启管线、替换 DMA-BUF，而 Qt 仍持有旧 FD，
+     * 最终造成黑屏。因此恢复自动 AE 必须在参数页由用户显式执行。 */
     mode="DISPLAY";
     event("debug_exited",c.auto_ae ? "returned to preview with auto AE" : "returned to preview with retained manual AE");
     return true;
