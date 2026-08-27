@@ -4,18 +4,49 @@
 
 已完成阶段 0–5 的源码、补丁、交叉编译和主要板端联调。项目没有删除或覆盖原 AI 应用的板端目录；展示版本独立部署到 `/userdata/rv1106-smart-camera/`。
 
-## 当前目录
+## 目录说明
 
 ```text
-kernel-patches/          后续阶段保存可审查、可回退的内核与 DTS patch
-app/camera-daemon/       后续阶段的守护进程
-app/qt-console/          后续阶段从既有 Qt 工程最小化扩展
-app/shared/              daemon/Qt 共用协议与数据结构
-scripts/                 板端基线和 V4L2 冒烟测试
-configs/                 后续阶段的示例配置
-docs/                    审计、基线说明与待确认问题
-tests/                   脚本静态检查及后续测试
+rv1106-smart-camera/
+├── app/                         核心应用程序
+│   ├── camera-daemon/            相机唯一控制仲裁者：管理 rkipc、媒体管线、NPU、
+│   │                              自动/手动 AE 和 V4L2 参数；通过 Unix Socket 给 UI 提供接口
+│   │   ├── include/              daemon 对外 C++ 头文件
+│   │   └── src/                  daemon 入口、配置读取、控制与进程监管实现
+│   ├── media-sender/             RV1106 原生 RKMPI/RKAIQ 采集管线：SC3336、VPSS、
+│   │                              RTSP、共享预览和 RKNN 人形检测
+│   │   ├── include/              媒体管线、IoU 跟踪和共享预览协议头文件
+│   │   ├── src/                  ISP/VI/VPSS/VENC/RTSP/NPU 等实现
+│   │   └── tests/                IoU 跟踪器的无需硬件单元测试
+│   ├── qt-console/               RV1106 触摸屏 Qt 界面：实时预览、AI 结果、设备调试、
+│   │                              手动曝光/增益和日志展示
+│   │   ├── fonts/                板端中文字体
+│   │   ├── include/              Qt 窗口、Socket 客户端、共享内存读取等头文件
+│   │   ├── resources/            Qt 样式表和资源索引
+│   │   ├── scripts/              单独编译或调试 Qt 界面的辅助脚本
+│   │   └── src/                  Qt UI 与预览/识别/调参逻辑
+│   ├── rtsp-preview-bridge/      兼容性 RTSP 到共享预览桥接；默认展示不依赖它
+│   └── shared/                   预留给 daemon、媒体管线和 UI 的公共协议
+├── rock2a-receiver/              可选的 ROCK 2A 识别端：接收 RTSP、事件选帧、SQLite、
+│                                  千问视觉识别和 TCP 回传（不属于人脸考勤）
+│   ├── config/                   ROCK 2A 服务环境变量模板
+│   ├── include/、src/            C++ RTSP 接收器
+│   ├── systemd/                  ROCK 2A systemd 服务单元
+│   ├── tests/                    事件、HTTP、存储相关测试
+│   └── tools/qwen_vision/        Python 事件引擎、千问调用、结果缓存与回传服务
+├── configs/                      可移植配置
+│   ├── config.json               默认板端运行配置（可直接部署）
+│   └── *.example                 本地 SDK、板卡地址、传感器/NPU 差异的模板；复制后不入库
+├── scripts/                      主流程脚本：构建、部署、启动、压力测试、调试和 release 打包
+├── tools/                        主机侧工具，例如 doctor.sh 环境自检
+├── tests/                        不需要硬件的脚本语法、配置契约等回归测试
+├── docs/                         架构、基线、驱动、测试、复现和面试说明
+│   └── ai-recognition/           ROCK 2A 事件识别链路的架构/API/迁移文档
+└── kernel-patches/               可审查、可回退的 SC3336 V4L2 驱动增强补丁
 ```
+
+构建产物位于 `build/`，release 包位于 `release/`；二者以及本机配置均被 Git 忽略。
+板端部署目录固定为 `/userdata/rv1106-smart-camera/`，不在源码树中。
 
 ## 构建、部署与使用
 
