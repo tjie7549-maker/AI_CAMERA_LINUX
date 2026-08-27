@@ -20,4 +20,11 @@ assert config["sender_path"].endswith("/media-sender")
 assert config["restart_after_failures"] >= 1
 assert config["low_light_frames"] >= 1
 assert config["recover_frames"] >= 1
+assert isinstance(config["backlight_control"], bool)
+assert config["backlight_idle_seconds"] >= 1
+assert config["backlight_wake_hits"] >= 1
+assert isinstance(config["memory_watchdog_enabled"], bool)
+assert config["memory_available_min_kb"] >= 1
+assert config["memory_low_checks"] >= 1
+assert config["memory_check_interval_ms"] >= 1
 print("config contract passed")

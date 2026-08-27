@@ -58,6 +58,21 @@ make package VERSION=rv1106-sc3336-v0.1.0
 
 退出项目时 daemon 会停止项目子进程并恢复 `rkipc`。`display` 只退出参数页，不会为了切回自动 AE 重建媒体管线，因此不会替换 Qt 正在使用的 DMA-BUF。
 
+## 4.1 背光与内存看门狗
+
+这两项由当前 `camera-daemon` 启动和监管，不依赖旧的 `/userdata/ai_camera` supervisor：
+
+- `backlight_control=true` 时，daemon 启动 NPU 时传入背光策略：连续确认人形
+  `backlight_wake_hits=3` 次后点亮，连续无人 `backlight_idle_seconds=30` 秒后熄灭；
+- `memory_watchdog_enabled=true` 时，daemon 每 `memory_check_interval_ms=10000` 毫秒读取
+  `/proc/meminfo` 的 `MemAvailable`；低于 `memory_available_min_kb=40960` 连续
+  `memory_low_checks=3` 次后，有序停止并重启本项目的 media-sender 与 NPU；
+- 看门狗只重启项目子进程，不重启系统、不删除数据，也不会杀死 `rkipc` 以外的系统服务。
+
+若板卡背光节点不同，必须在 `config.local.json` 调整 `backlight_path`。不希望演示中自动
+熄屏时，将 `backlight_control` 设为 `false`；不希望自动恢复时，将
+`memory_watchdog_enabled` 设为 `false`。
+
 ## 5. 迁移到另一块板子
 
 1. 从 `config.local.json.example` 复制本机配置；

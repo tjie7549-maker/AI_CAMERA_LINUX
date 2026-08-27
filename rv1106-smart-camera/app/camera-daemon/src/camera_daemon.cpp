@@ -46,8 +46,8 @@ struct CameraDaemon::Impl {
   /* 在自动 AE/AGC 仍控制 sensor 时抓取的快照。这才是本次演示会话的
    * “恢复默认参数”，而不是写死的低亮度标定值。 */
   int baseline_exposure, baseline_gain, baseline_vblank, baseline_hflip, baseline_vflip, baseline_test_pattern;
-  int failures, dark_frames, bright_frames; long long restart_at, npu_start_at; std::string state, last_error, mode;
-  Impl(const DaemonConfig& x):c(x),server_fd(-1),sender_pid(-1),npu_pid(-1),rkipc_pid(-1),running(true),npu_started_once(false),manual_restart_pending(false),manual_exposure(x.default_exposure),manual_gain(x.default_analogue_gain),baseline_exposure(x.default_exposure),baseline_gain(x.default_analogue_gain),baseline_vblank(x.default_vblank),baseline_hflip(x.default_hflip),baseline_vflip(x.default_vflip),baseline_test_pattern(x.default_test_pattern),failures(0),dark_frames(0),bright_frames(0),restart_at(0),npu_start_at(0),state("NORMAL"),mode("DISPLAY") {}
+  int failures, dark_frames, bright_frames, low_memory_count; long long restart_at, npu_start_at, last_memory_check_at; std::string state, last_error, mode;
+  Impl(const DaemonConfig& x):c(x),server_fd(-1),sender_pid(-1),npu_pid(-1),rkipc_pid(-1),running(true),npu_started_once(false),manual_restart_pending(false),manual_exposure(x.default_exposure),manual_gain(x.default_analogue_gain),baseline_exposure(x.default_exposure),baseline_gain(x.default_analogue_gain),baseline_vblank(x.default_vblank),baseline_hflip(x.default_hflip),baseline_vflip(x.default_vflip),baseline_test_pattern(x.default_test_pattern),failures(0),dark_frames(0),bright_frames(0),low_memory_count(0),restart_at(0),npu_start_at(0),last_memory_check_at(0),state("NORMAL"),mode("DISPLAY") {}
   void event(const char* type, const std::string& detail) {
     mkdir_parent(c.log_path); int fd=open(c.log_path.c_str(),O_WRONLY|O_CREAT|O_APPEND,0644); if(fd<0)return;
     std::ostringstream o; o << "{\"monotonic_ms\":" << monotonic_ms() << ",\"type\":\"" << type << "\",\"state\":\"" << state << "\",\"detail\":\"" << json_escape(detail) << "\"}\n";
@@ -58,8 +58,13 @@ struct CameraDaemon::Impl {
     pid_t p=fork(); if(p<0){last_error="fork failed";return false;} if(p==0) {
       setsid(); setenv("LD_LIBRARY_PATH", "/oem/usr/lib", 1); if(sender && path==c.bridge_path) execl(path.c_str(),path.c_str(),"--url",c.rtsp_url.c_str(),(char*)0);
       else if(sender) execl(path.c_str(),path.c_str(),"--no-vo","--preview-shm","/ai_cam_preview","--preview-width","384","--preview-height","216","--preview-fps","15","--isp-control-socket",c.isp_control_socket.c_str(),"-a",c.iq_dir.c_str(),"-o","/dev/null",(char*)0);
-      else
-        execl(path.c_str(),path.c_str(),"--no-backlight-control",(char*)0);
+      else {
+        std::string idle=std::to_string(c.backlight_idle_seconds), wake=std::to_string(c.backlight_wake_hits);
+        if(c.backlight_control)
+          execl(path.c_str(),path.c_str(),"--idle-seconds",idle.c_str(),"--wake-hits",wake.c_str(),"--backlight-path",c.backlight_path.c_str(),(char*)0);
+        else
+          execl(path.c_str(),path.c_str(),"--no-backlight-control",(char*)0);
+      }
       _exit(127);
     }
     if(sender)sender_pid=p; else npu_pid=p; event(sender?"pipeline_started":"npu_started",path); return true;
@@ -162,6 +167,27 @@ struct CameraDaemon::Impl {
     }
     if(sender_pid<0 && restart_at && monotonic_ms()>=restart_at) {restart_at=0; failures=0; state="RECOVERING"; if(start_capture()) state="NORMAL";}
   }
+  long memory_available_kb() const {
+    std::ifstream f("/proc/meminfo"); std::string key, unit; long value=0;
+    while(f>>key>>value>>unit) if(key=="MemAvailable:") return value;
+    return -1;
+  }
+  void check_memory_watchdog() {
+    if(!c.memory_watchdog_enabled)return;
+    const long long now=monotonic_ms();
+    if(last_memory_check_at && now-last_memory_check_at<c.memory_check_interval_ms)return;
+    last_memory_check_at=now;
+    const long available=memory_available_kb();
+    if(available<0)return;
+    if(available>=c.memory_available_min_kb) { low_memory_count=0; return; }
+    ++low_memory_count;
+    event("memory_pressure","MemAvailable="+std::to_string(available)+"kB, samples="+std::to_string(low_memory_count));
+    if(low_memory_count<c.memory_low_checks)return;
+    low_memory_count=0; failures=0; state="RECOVERING";
+    event("memory_recovery","stopping project media chain before restart");
+    stop_capture();
+    restart_at=monotonic_ms()+c.restart_backoff_ms;
+  }
   bool rkipc_write_all(int fd,const void* data,size_t bytes) {
     const char* p=(const char*)data;
     while(bytes) { ssize_t n=write(fd,p,bytes); if(n<=0)return false; p+=n; bytes-=(size_t)n; }
@@ -246,7 +272,9 @@ struct CameraDaemon::Impl {
      <<",\"last_error\":\""<<json_escape(last_error)<<"\",\"controls\":{\"exposure\":"<<(c.auto_ae ? read_control(V4L2_CID_EXPOSURE) : manual_exposure)
      <<",\"analogue_gain\":"<<(c.auto_ae ? read_control(V4L2_CID_ANALOGUE_GAIN) : manual_gain)<<",\"vblank\":"<<read_control(V4L2_CID_VBLANK)
      <<",\"hflip\":"<<read_control(V4L2_CID_HFLIP)<<",\"vflip\":"<<read_control(V4L2_CID_VFLIP)
-     <<",\"test_pattern\":"<<read_control(V4L2_CID_TEST_PATTERN)<<"}}";
+     <<",\"test_pattern\":"<<read_control(V4L2_CID_TEST_PATTERN)<<"},\"watchdog\":{\"backlight_control\":"<<(c.backlight_control?"true":"false")
+     <<",\"backlight_idle_seconds\":"<<c.backlight_idle_seconds<<",\"backlight_wake_hits\":"<<c.backlight_wake_hits
+     <<",\"memory_watchdog_enabled\":"<<(c.memory_watchdog_enabled?"true":"false")<<",\"memory_available_kb\":"<<memory_available_kb()<<"}}";
     return o.str();
   }
 };
@@ -265,7 +293,7 @@ bool CameraDaemon::start() {
 void CameraDaemon::stop(){if(!impl_||!impl_->running)return;impl_->running=false;impl_->stop_capture();impl_->mode="DISPLAY";(void)impl_->start_rkipc();if(impl_->server_fd>=0){close(impl_->server_fd);impl_->server_fd=-1;}unlink(impl_->c.socket_path.c_str());impl_->event("daemon_stopped","");}
 void CameraDaemon::run() {
   while(impl_->running) {
-    struct pollfd p={impl_->server_fd,POLLIN,0}; int r=poll(&p,1,1000); impl_->check_children();
+    struct pollfd p={impl_->server_fd,POLLIN,0}; int r=poll(&p,1,1000); impl_->check_children(); impl_->check_memory_watchdog();
     if(r>0&&(p.revents&POLLIN)) {
       int fd=accept(impl_->server_fd,0,0);
       if(fd>=0) {
@@ -295,15 +323,15 @@ std::string CameraDaemon::handle(const std::string& r) {
 }
 bool CameraDaemon::load_config(const std::string& path, DaemonConfig* c, std::string* e) {
   std::ifstream f(path.c_str());if(!f){*e="cannot open";return false;}std::stringstream ss;ss<<f.rdbuf();std::string s=ss.str(),v;
-  c->socket_path="/userdata/rv1106-smart-camera/run/camera-daemon.sock";c->log_path="/userdata/rv1106-smart-camera/logs/events.jsonl";c->sensor_subdev="/dev/v4l-subdev2";c->sender_path="/userdata/rv1106-smart-camera/bin/media-sender";c->bridge_path="/userdata/rv1106-smart-camera/bin/rtsp-preview-bridge";c->npu_path="/userdata/npu_detect/npu_detect";c->iq_dir="/oem/usr/share/iqfiles";c->isp_control_socket="/tmp/rv1106_isp_control.sock";c->rkipc_path="/oem/usr/bin/rkipc";c->rkipc_socket="/var/tmp/rkipc";c->rtsp_url="rtsp://127.0.0.1/live/0";c->restart_after_failures=3;c->restart_backoff_ms=3000;c->low_light_frames=15;c->recover_frames=30;c->low_light_luma=45;c->npu_latency_max_ms=150;c->default_exposure=128;c->default_analogue_gain=128;c->default_vblank=64;c->default_hflip=0;c->default_vflip=0;c->default_test_pattern=0;c->start_pipeline=true;c->start_npu=true;c->auto_ae=true;
+  c->socket_path="/userdata/rv1106-smart-camera/run/camera-daemon.sock";c->log_path="/userdata/rv1106-smart-camera/logs/events.jsonl";c->sensor_subdev="/dev/v4l-subdev2";c->sender_path="/userdata/rv1106-smart-camera/bin/media-sender";c->bridge_path="/userdata/rv1106-smart-camera/bin/rtsp-preview-bridge";c->npu_path="/userdata/npu_detect/npu_detect";c->iq_dir="/oem/usr/share/iqfiles";c->isp_control_socket="/tmp/rv1106_isp_control.sock";c->rkipc_path="/oem/usr/bin/rkipc";c->rkipc_socket="/var/tmp/rkipc";c->rtsp_url="rtsp://127.0.0.1/live/0";c->backlight_path="/sys/class/backlight/backlight/bl_power";c->restart_after_failures=3;c->restart_backoff_ms=3000;c->low_light_frames=15;c->recover_frames=30;c->backlight_idle_seconds=30;c->backlight_wake_hits=3;c->memory_available_min_kb=40960;c->memory_low_checks=3;c->memory_check_interval_ms=10000;c->low_light_luma=45;c->npu_latency_max_ms=150;c->default_exposure=128;c->default_analogue_gain=128;c->default_vblank=64;c->default_hflip=0;c->default_vflip=0;c->default_test_pattern=0;c->start_pipeline=true;c->start_npu=true;c->auto_ae=true;c->backlight_control=true;c->memory_watchdog_enabled=true;
 #define STR(k,m) if(field(s,k,&v))c->m=v
 #define NUM(k,m) {double x;if(number_field(s,k,&x))c->m=(int)x;}
 #define DBL(k,m) {double x;if(number_field(s,k,&x))c->m=x;}
 #define BOL(k,m) {bool x;if(bool_field(s,k,&x))c->m=x;}
-  STR("socket_path",socket_path);STR("log_path",log_path);STR("sensor_subdev",sensor_subdev);STR("sender_path",sender_path);STR("bridge_path",bridge_path);STR("npu_path",npu_path);STR("iq_dir",iq_dir);STR("isp_control_socket",isp_control_socket);STR("rkipc_path",rkipc_path);STR("rkipc_socket",rkipc_socket);STR("rtsp_url",rtsp_url);NUM("restart_after_failures",restart_after_failures);NUM("restart_backoff_ms",restart_backoff_ms);NUM("low_light_frames",low_light_frames);NUM("recover_frames",recover_frames);NUM("default_exposure",default_exposure);NUM("default_analogue_gain",default_analogue_gain);NUM("default_vblank",default_vblank);NUM("default_hflip",default_hflip);NUM("default_vflip",default_vflip);NUM("default_test_pattern",default_test_pattern);DBL("low_light_luma",low_light_luma);DBL("npu_latency_max_ms",npu_latency_max_ms);BOL("start_pipeline",start_pipeline);BOL("start_npu",start_npu);BOL("auto_ae",auto_ae);
+  STR("socket_path",socket_path);STR("log_path",log_path);STR("sensor_subdev",sensor_subdev);STR("sender_path",sender_path);STR("bridge_path",bridge_path);STR("npu_path",npu_path);STR("iq_dir",iq_dir);STR("isp_control_socket",isp_control_socket);STR("rkipc_path",rkipc_path);STR("rkipc_socket",rkipc_socket);STR("rtsp_url",rtsp_url);STR("backlight_path",backlight_path);NUM("restart_after_failures",restart_after_failures);NUM("restart_backoff_ms",restart_backoff_ms);NUM("low_light_frames",low_light_frames);NUM("recover_frames",recover_frames);NUM("backlight_idle_seconds",backlight_idle_seconds);NUM("backlight_wake_hits",backlight_wake_hits);NUM("memory_available_min_kb",memory_available_min_kb);NUM("memory_low_checks",memory_low_checks);NUM("memory_check_interval_ms",memory_check_interval_ms);NUM("default_exposure",default_exposure);NUM("default_analogue_gain",default_analogue_gain);NUM("default_vblank",default_vblank);NUM("default_hflip",default_hflip);NUM("default_vflip",default_vflip);NUM("default_test_pattern",default_test_pattern);DBL("low_light_luma",low_light_luma);DBL("npu_latency_max_ms",npu_latency_max_ms);BOL("start_pipeline",start_pipeline);BOL("start_npu",start_npu);BOL("auto_ae",auto_ae);BOL("backlight_control",backlight_control);BOL("memory_watchdog_enabled",memory_watchdog_enabled);
 #undef STR
 #undef NUM
 #undef DBL
 #undef BOL
-  if(c->restart_after_failures<1||c->low_light_frames<1||c->recover_frames<1){*e="thresholds must be positive";return false;}return true;
+  if(c->restart_after_failures<1||c->low_light_frames<1||c->recover_frames<1||c->backlight_idle_seconds<1||c->backlight_wake_hits<1||c->memory_available_min_kb<1||c->memory_low_checks<1||c->memory_check_interval_ms<1){*e="thresholds must be positive";return false;}return true;
 }
