@@ -1,6 +1,10 @@
 # RV1106 build output
 rv1106-smart-camera/build/
 rv1106-smart-camera/app/media-sender/out/
+rv1106-smart-camera/release/
+rv1106-smart-camera/configs/build.env
+rv1106-smart-camera/configs/board.env
+rv1106-smart-camera/configs/config.local.json
 
 # ROCK 2A build output and runtime data
 rv1106-smart-camera/rock2a-receiver/build/

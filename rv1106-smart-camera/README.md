@@ -22,10 +22,15 @@ tests/                   脚本静态检查及后续测试
 主机交叉构建（不下载依赖）：
 
 ```sh
+./tools/doctor.sh
 ./scripts/build_app.sh
 ./scripts/deploy_app.sh --ip 172.32.0.93 --dry-run
 ./scripts/deploy_app.sh --ip 172.32.0.93
 ```
+
+在另一台主机或另一块板子上，先复制 `configs/*.example` 为本地配置，再通过
+`--env configs/build.env`、`--env configs/board.env` 和 `--config configs/config.local.json`
+覆盖默认值；详见 `docs/reproducibility.md`。
 
 部署只写 `/userdata/rv1106-smart-camera/`，不会删除远端文件或覆盖系统目录。板端推荐运行 `scripts/run_demo.sh`；压力测试用 `scripts/stress_test.sh 10`。运行期间项目原生 RKAIQ/RKMPI 管线独占相机，Qt 与 NPU 读取同一份 384×216 DMA-BUF 共享预览；退出后恢复系统 `rkipc`。
 
@@ -55,3 +60,4 @@ SC3336 驱动补丁增强 I2C 错误传播、`s_stream()` 状态回滚、runtime
 - `docs/pre-implementation-audit.md`：阶段 0 实施前审计报告
 - `docs/baseline.md`：阶段 1 板端执行与结果保存方法
 - `docs/open-questions.md`：必须由板端或硬件资料确认的问题
+- `docs/reproducibility.md`：环境自检、配置外置、版本化交付与迁移步骤

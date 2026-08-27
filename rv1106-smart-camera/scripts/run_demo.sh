@@ -3,7 +3,7 @@
 # after the daemon stops. Ctrl+C never signals camera-daemon directly.
 set -u
 
-root=/userdata/rv1106-smart-camera
+root=${RV1106_SMART_CAMERA_ROOT:-/userdata/rv1106-smart-camera}
 daemon_pid=
 ui_pid=
 cleaned=0

@@ -31,6 +31,16 @@ static int request(const char* socketPath, const char* json) {
 int main(int argc, char** argv) {
   if (argc == 4 && strcmp(argv[1], "--request") == 0)
     return request(argv[2], argv[3]);
+  if (argc == 3 && strcmp(argv[1], "--validate-config") == 0) {
+    DaemonConfig config;
+    std::string error;
+    if (!CameraDaemon::load_config(argv[2], &config, &error)) {
+      fprintf(stderr, "camera-daemon: config %s: %s\n", argv[2], error.c_str());
+      return 2;
+    }
+    printf("config valid: %s\n", argv[2]);
+    return 0;
+  }
   const char* config_path = argc > 1 ? argv[1] : "/userdata/rv1106-smart-camera/config.json";
   DaemonConfig config;
   std::string error;

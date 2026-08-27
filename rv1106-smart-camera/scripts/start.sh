@@ -2,7 +2,7 @@
 # Run on the board. It refuses to start a second daemon to avoid camera contention.
 set -eu
 
-root=/userdata/rv1106-smart-camera
+root=${RV1106_SMART_CAMERA_ROOT:-/userdata/rv1106-smart-camera}
 mkdir -p "$root/logs" "$root/run" "$root/captures"
 if pidof camera-daemon >/dev/null 2>&1; then
   echo "camera-daemon is already running; refusing a second camera owner." >&2
