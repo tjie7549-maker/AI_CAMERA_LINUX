@@ -1,14 +1,12 @@
 # RV1106 build output
-/out/
-rv1106_sender/out/
-rv1106_ai_ui/build/
-rv1106_ai_ui/fonts/
+rv1106-smart-camera/build/
+rv1106-smart-camera/app/media-sender/out/
 
 # ROCK 2A build output and runtime data
-rock2a_receiver/build/
-rock2a_receiver/.venv-qwen/
-rock2a_receiver/artifacts/
-rock2a_receiver/runtime/
+rv1106-smart-camera/rock2a-receiver/build/
+rv1106-smart-camera/rock2a-receiver/.venv-qwen/
+rv1106-smart-camera/rock2a-receiver/artifacts/
+rv1106-smart-camera/rock2a-receiver/runtime/
 
 # Local editor configuration
 *.code-workspace
