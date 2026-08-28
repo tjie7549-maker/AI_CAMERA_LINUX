@@ -63,7 +63,24 @@ rv1106-smart-camera/
 `--env configs/build.env`、`--env configs/board.env` 和 `--config configs/config.local.json`
 覆盖默认值；详见 `docs/reproducibility.md`。
 
-部署只写 `/userdata/rv1106-smart-camera/`，不会删除远端文件或覆盖系统目录。板端推荐运行 `scripts/run_demo.sh`；压力测试用 `scripts/stress_test.sh 10`。运行期间项目原生 RKAIQ/RKMPI 管线独占相机，Qt 与 NPU 读取同一份 384×216 DMA-BUF 共享预览；退出后恢复系统 `rkipc`。
+部署默认只写 `/userdata/rv1106-smart-camera/`，不会删除远端文件。板端推荐运行 `scripts/run_demo.sh`；压力测试用 `scripts/stress_test.sh 10`。运行期间项目原生 RKAIQ/RKMPI 管线独占相机，Qt 与 NPU 读取同一份 384×216 DMA-BUF 共享预览；退出后恢复系统 `rkipc`。
+
+### 当前项目开机自启动
+
+首次部署时使用 `./scripts/deploy_app.sh --ip 172.32.0.93 --install-autostart`，仅额外安装当前项目的启动入口到 `/oem/usr/etc/init.d/S99rv1106-smart-camera`。系统启动后会等待 25 秒，再运行 `/userdata/rv1106-smart-camera/scripts/run_demo.sh`，避免与系统媒体服务的启动阶段争用相机。
+
+板端开关不改系统文件，只使用项目目录里的标记文件：
+
+```sh
+# 禁用后立即停止本项目；下次开机也不会启动
+sh /userdata/rv1106-smart-camera/scripts/autostart_ctl.sh disable
+
+# 删除禁用标记并安排一次启动；下次开机同样生效
+sh /userdata/rv1106-smart-camera/scripts/autostart_ctl.sh enable
+
+# 查看开关、启动包装器及 camera-daemon 状态
+sh /userdata/rv1106-smart-camera/scripts/autostart_ctl.sh status
+```
 
 ## 架构与增强点
 

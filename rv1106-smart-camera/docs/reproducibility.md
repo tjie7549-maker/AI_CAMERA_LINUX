@@ -38,13 +38,19 @@ make test
 make package VERSION=rv1106-sc3336-v0.1.0
 ```
 
-压缩包包含四个可执行程序、字体、运行配置、启动脚本与 `manifest.txt`。manifest 记录 Git commit、UTC 时间和每个交付文件的 SHA256，用于同学或面试官复核“代码版本—二进制—板端行为”的对应关系。
+压缩包包含四个可执行程序、字体、运行配置、启动脚本（含开机自启动服务与开关脚本）和 `manifest.txt`。manifest 记录 Git commit、UTC 时间和每个交付文件的 SHA256，用于同学或面试官复核“代码版本—二进制—板端行为”的对应关系。
 
 常规部署仍保持原有的非破坏性方式：
 
 ```sh
 ./scripts/deploy_app.sh --env configs/board.env --config configs/config.local.json
 ```
+
+需要开机启动时，在部署命令末尾增加 `--install-autostart`。这会安装本项目专用的
+`/oem/usr/etc/init.d/S99rv1106-smart-camera`；服务延迟 25 秒执行 `run_demo.sh`。
+在板端执行 `scripts/autostart_ctl.sh disable` 会创建
+`/userdata/rv1106-smart-camera/.autostart-disabled`，立即停止当前项目并禁止后续开机启动；
+执行 `enable` 删除该文件并重新允许启动。它不会启用或修改旧 `/userdata/ai_camera` 项目。
 
 脚本只写 `/userdata/rv1106-smart-camera/`，不写系统目录，也不会删除远端文件。
 

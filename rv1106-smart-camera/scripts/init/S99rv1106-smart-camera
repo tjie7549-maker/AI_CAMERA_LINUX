@@ -1,0 +1,11 @@
+#!/bin/sh
+# 此文件安装到 /oem/usr/etc/init.d/；实际逻辑和开关均位于可写 userdata。
+service=/userdata/rv1106-smart-camera/scripts/autostart_service.sh
+
+case "${1:-}" in
+    start) [ -x "$service" ] && "$service" start ;;
+    stop) [ -x "$service" ] && "$service" stop ;;
+    restart) [ -x "$service" ] && "$service" restart ;;
+    status) [ -x "$service" ] && "$service" status ;;
+    *) echo "Usage: $0 {start|stop|restart|status}" >&2; exit 2 ;;
+esac
