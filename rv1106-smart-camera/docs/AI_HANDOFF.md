@@ -56,11 +56,11 @@ media-sender (RKAIQ + VI + VPSS + preview shared memory)
 
 ## 主要文件
 
-- `rv1106-smart-camera/app/camera-daemon/src/camera_daemon.cpp`
+- `rv1106-smart-camera/rv1106-sender/camera-daemon/src/camera_daemon.cpp`
   - 生命周期、rkipc 接管/恢复、UI 请求、手动控制。
 - `rv1106-smart-camera/scripts/run_demo.sh`
   - 一键启动、Ctrl+C 清理、守护进程退出后的自动拉起。
-- `rv1106-smart-camera/app/qt-console/src/camera_debug_dialog.cpp`
+- `rv1106-smart-camera/rv1106-sender/qt-console/src/camera_debug_dialog.cpp`
   - 调试页布局、数值输入、恢复安全基线按钮。
 - `ai_cam/rv1106_sender/src/ai_cam_app.c`
   - `--preview-shm` 模式下禁用本地 RTSP 端口绑定。

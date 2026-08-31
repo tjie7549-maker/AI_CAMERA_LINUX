@@ -13,7 +13,7 @@ build:
 test:
 	./tests/check_scripts.sh
 	python3 ./tests/test_config_contract.py
-	$(MAKE) -C app/media-sender SDK_DIR=$${SDK_DIR:-/home/summary/linux/luckfox-pico} tracker-test
+	$(MAKE) -C rv1106-sender/media-sender SDK_DIR=$${SDK_DIR:-/home/summary/linux/luckfox-pico} tracker-test
 
 package:
 	./scripts/package_release.sh $(if $(VERSION),--version $(VERSION))

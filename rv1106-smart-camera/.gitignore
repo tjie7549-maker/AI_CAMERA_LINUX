@@ -1,6 +1,5 @@
 /build/
-/app/camera-daemon/camera-daemon
-/app/rtsp-preview-bridge/rtsp-preview-bridge
+/rv1106-sender/camera-daemon/camera-daemon
+/rv1106-sender/rtsp-preview-bridge/rtsp-preview-bridge
 *.o
 .qmake.stash
-

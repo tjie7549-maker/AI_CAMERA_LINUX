@@ -20,7 +20,7 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 [ -n "$board_ip" ] || usage
-font_file=$project_dir/app/qt-console/fonts/DroidSansFallbackFull.ttf
+font_file=$project_dir/rv1106-sender/qt-console/fonts/DroidSansFallbackFull.ttf
 for f in "$build_dir/bin/media-sender" "$build_dir/bin/camera-daemon" "$build_dir/bin/rv1106_ai_ui" "$font_file" "$config_file" "$project_dir/scripts/run_demo.sh" "$project_dir/scripts/start.sh" "$project_dir/scripts/stress_test.sh" "$project_dir/scripts/autostart_service.sh" "$project_dir/scripts/autostart_ctl.sh" "$project_dir/scripts/init/S99rv1106-smart-camera"; do
   [ -f "$f" ] || { echo "Missing build/deploy input: $f; run build_app.sh first" >&2; exit 3; }
 done

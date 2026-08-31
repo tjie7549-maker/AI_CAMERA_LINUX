@@ -33,7 +33,7 @@ check_file "SDK" "$sdk_dir/media/Makefile.param"
 check_file "cross-gcc" "$toolchain"
 check_file "qmake" "$qmake"
 check_file "runtime config" "$project_dir/configs/config.json"
-check_file "media sender" "$project_dir/app/media-sender/Makefile"
+check_file "media sender" "$project_dir/rv1106-sender/media-sender/Makefile"
 
 if [ "$failed" -ne 0 ]; then
   echo "Environment is incomplete. Copy configs/build.env.example and pass --env." >&2

@@ -32,7 +32,7 @@ for f in media-sender camera-daemon rtsp-preview-bridge rv1106_ai_ui; do
   test -f "$build_dir/bin/$f" || { echo "missing: $build_dir/bin/$f" >&2; exit 3; }
   install -m 755 "$build_dir/bin/$f" "$stage/bin/$f"
 done
-install -m 644 "$project_dir/app/qt-console/fonts/DroidSansFallbackFull.ttf" "$stage/bin/fonts/"
+install -m 644 "$project_dir/rv1106-sender/qt-console/fonts/DroidSansFallbackFull.ttf" "$stage/bin/fonts/"
 install -m 644 "$config_file" "$stage/config.json"
 for f in run_demo.sh start.sh stress_test.sh mode_ctl.sh autostart_service.sh autostart_ctl.sh; do
   install -m 755 "$project_dir/scripts/$f" "$stage/scripts/$f"

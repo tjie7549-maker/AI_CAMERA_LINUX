@@ -8,7 +8,7 @@
 
 ```text
 rv1106-smart-camera/
-├── app/                         核心应用程序
+├── rv1106-sender/               RV1106 发送端核心程序
 │   ├── camera-daemon/            相机唯一控制仲裁者：管理 rkipc、媒体管线、NPU、
 │   │                              自动/手动 AE 和 V4L2 参数；通过 Unix Socket 给 UI 提供接口
 │   │   ├── include/              daemon 对外 C++ 头文件
@@ -45,7 +45,7 @@ rv1106-smart-camera/
 └── kernel-patches/               可审查、可回退的 SC3336 V4L2 驱动增强补丁
 ```
 
-构建产物位于 `build/`，release 包位于 `release/`；二者以及本机配置均被 Git 忽略。
+`rv1106-sender/README.md` 提供板端进程、数据通道和源码入口的代码导览。构建产物位于 `build/`，release 包位于 `release/`；二者以及本机配置均被 Git 忽略。
 板端部署目录固定为 `/userdata/rv1106-smart-camera/`，不在源码树中。
 
 ## 构建、部署与使用
