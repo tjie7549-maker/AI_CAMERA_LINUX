@@ -1,14 +1,17 @@
 #include "rtsp_receiver.h"
 
-#include <cerrno>
+// ROCK 2A 的 RTSP 接收实现：解码 RV1106 子码流，周期性写入最新 JPEG，
+// 并维护有界帧环，供事件服务将检测结果匹配到可识别图像。
+
 #include <algorithm>
+#include <cerrno>
+#include <cmath>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
-#include <cmath>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -35,12 +38,14 @@ std::string timestampForFilename() {
 
 std::int64_t epochMilliseconds() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
+               std::chrono::system_clock::now().time_since_epoch())
+        .count();
 }
 
 }  // namespace
 
-RtspReceiver::RtspReceiver(Config config) : config_(std::move(config)) {}
+RtspReceiver::RtspReceiver(Config config) : config_(std::move(config)) {
+}
 
 RtspReceiver::~RtspReceiver() {
     close();
@@ -83,11 +88,13 @@ bool RtspReceiver::openInput() {
     if (config_.use_tcp) {
         av_dict_set(&options, "rtsp_transport", "tcp", 0);
     }
-    av_dict_set_int(&options, "stimeout", static_cast<std::int64_t>(config_.open_timeout_ms) * 1000, 0);
-    av_dict_set_int(&options, "rw_timeout", static_cast<std::int64_t>(config_.read_timeout_ms) * 1000, 0);
+    av_dict_set_int(&options, "stimeout", static_cast<std::int64_t>(config_.open_timeout_ms) * 1000,
+                    0);
+    av_dict_set_int(&options, "rw_timeout",
+                    static_cast<std::int64_t>(config_.read_timeout_ms) * 1000, 0);
 
-    io_deadline_ = std::chrono::steady_clock::now() +
-                   std::chrono::milliseconds(config_.open_timeout_ms);
+    io_deadline_ =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(config_.open_timeout_ms);
     int result = avformat_open_input(&format_context_, config_.url.c_str(), nullptr, &options);
     av_dict_free(&options);
     if (result < 0) {
@@ -101,8 +108,8 @@ bool RtspReceiver::openInput() {
         return false;
     }
 
-    io_deadline_ = std::chrono::steady_clock::now() +
-                   std::chrono::milliseconds(config_.open_timeout_ms);
+    io_deadline_ =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(config_.open_timeout_ms);
     result = avformat_find_stream_info(format_context_, nullptr);
     if (result < 0) {
         if (shouldStop()) {
@@ -237,8 +244,8 @@ bool RtspReceiver::processDecodedFrame(AVFrame* frame) {
         return false;
     }
 
-    sws_scale(rgb_sws_context_, frame->data, frame->linesize, 0, frame->height,
-              rgb_frame_->data, rgb_frame_->linesize);
+    sws_scale(rgb_sws_context_, frame->data, frame->linesize, 0, frame->height, rgb_frame_->data,
+              rgb_frame_->linesize);
 
     const auto now = std::chrono::steady_clock::now();
     if (!has_snapshot_time_ ||
@@ -258,8 +265,8 @@ bool RtspReceiver::processDecodedFrame(AVFrame* frame) {
         has_latest_image_time_ = true;
     }
     if (!config_.frame_cache_dir.empty() &&
-        (!has_frame_cache_time_ || now - last_frame_cache_ >=
-         std::chrono::milliseconds(config_.frame_cache_interval_ms))) {
+        (!has_frame_cache_time_ ||
+         now - last_frame_cache_ >= std::chrono::milliseconds(config_.frame_cache_interval_ms))) {
         saveFrameCache(rgb_frame_);
         last_frame_cache_ = now;
         has_frame_cache_time_ = true;
@@ -275,16 +282,15 @@ bool RtspReceiver::prepareConverter(const AVFrame* frame) {
     }
 
     rgb_sws_context_ = sws_getCachedContext(
-        rgb_sws_context_, frame->width, frame->height,
-        static_cast<AVPixelFormat>(source_format), frame->width, frame->height,
-        AV_PIX_FMT_RGB24, SWS_BILINEAR, nullptr, nullptr, nullptr);
+        rgb_sws_context_, frame->width, frame->height, static_cast<AVPixelFormat>(source_format),
+        frame->width, frame->height, AV_PIX_FMT_RGB24, SWS_BILINEAR, nullptr, nullptr, nullptr);
     if (!rgb_sws_context_) {
         std::cerr << "create RGB converter failed\n";
         return false;
     }
 
-    const int buffer_size = av_image_get_buffer_size(AV_PIX_FMT_RGB24, frame->width,
-                                                     frame->height, 1);
+    const int buffer_size =
+        av_image_get_buffer_size(AV_PIX_FMT_RGB24, frame->width, frame->height, 1);
     if (buffer_size < 0) {
         std::cerr << "calculate RGB buffer size failed: " << errorString(buffer_size) << '\n';
         return false;
@@ -294,9 +300,9 @@ bool RtspReceiver::prepareConverter(const AVFrame* frame) {
     rgb_frame_->format = AV_PIX_FMT_RGB24;
     rgb_frame_->width = frame->width;
     rgb_frame_->height = frame->height;
-    const int result = av_image_fill_arrays(rgb_frame_->data, rgb_frame_->linesize,
-                                            rgb_buffer_.data(), AV_PIX_FMT_RGB24,
-                                            frame->width, frame->height, 1);
+    const int result =
+        av_image_fill_arrays(rgb_frame_->data, rgb_frame_->linesize, rgb_buffer_.data(),
+                             AV_PIX_FMT_RGB24, frame->width, frame->height, 1);
     if (result < 0) {
         std::cerr << "prepare RGB frame failed: " << errorString(result) << '\n';
         return false;
@@ -306,8 +312,8 @@ bool RtspReceiver::prepareConverter(const AVFrame* frame) {
     source_format_ = source_format;
     const char* source_name = av_get_pix_fmt_name(static_cast<AVPixelFormat>(source_format));
     std::cout << "[decode] input_format=" << (source_name ? source_name : "unknown")
-              << " output_format=rgb24 size=" << source_width_ << 'x' << source_height_
-              << '\n' << std::flush;
+              << " output_format=rgb24 size=" << source_width_ << 'x' << source_height_ << '\n'
+              << std::flush;
     return prepareJpegEncoder(frame->width, frame->height);
 }
 
@@ -348,9 +354,9 @@ bool RtspReceiver::prepareJpegEncoder(int width, int height) {
         closeJpegEncoder();
         return false;
     }
-    jpeg_sws_context_ = sws_getCachedContext(
-        nullptr, width, height, AV_PIX_FMT_RGB24, width, height,
-        AV_PIX_FMT_YUVJ420P, SWS_BILINEAR, nullptr, nullptr, nullptr);
+    jpeg_sws_context_ =
+        sws_getCachedContext(nullptr, width, height, AV_PIX_FMT_RGB24, width, height,
+                             AV_PIX_FMT_YUVJ420P, SWS_BILINEAR, nullptr, nullptr, nullptr);
     if (!jpeg_sws_context_) {
         std::cerr << "create JPEG converter failed\n";
         closeJpegEncoder();
@@ -363,8 +369,8 @@ bool RtspReceiver::prepareJpegEncoder(int width, int height) {
 
 bool RtspReceiver::saveSnapshot(const AVFrame* rgb_frame) {
     std::ostringstream name;
-    name << "frame_" << std::setw(6) << std::setfill('0') << (snapshots_ + 1)
-         << '_' << timestampForFilename() << ".jpg";
+    name << "frame_" << std::setw(6) << std::setfill('0') << (snapshots_ + 1) << '_'
+         << timestampForFilename() << ".jpg";
     const std::filesystem::path output_path =
         std::filesystem::path(config_.output_dir) / name.str();
     return encodeAndWriteJpeg(rgb_frame, output_path.string(), false);
@@ -379,11 +385,13 @@ bool RtspReceiver::saveFrameCache(const AVFrame* rgb_frame) {
     const std::filesystem::path directory(config_.frame_cache_dir);
     std::error_code error;
     std::filesystem::create_directories(directory, error);
-    if (error) return false;
-    const std::string stem = "frame_" + std::to_string(captured_at_ms) + "_" +
-                             std::to_string(decoded_frames_);
+    if (error)
+        return false;
+    const std::string stem =
+        "frame_" + std::to_string(captured_at_ms) + "_" + std::to_string(decoded_frames_);
     const std::filesystem::path image_path = directory / (stem + ".jpg");
-    if (!encodeAndWriteJpeg(rgb_frame, image_path.string(), false)) return false;
+    if (!encodeAndWriteJpeg(rgb_frame, image_path.string(), false))
+        return false;
 
     double mean = 0.0, square = 0.0, difference = 1.0;
     std::uint64_t samples = 0;
@@ -396,10 +404,15 @@ bool RtspReceiver::saveFrameCache(const AVFrame* rgb_frame) {
             const std::uint8_t* pixel = row + x * 3;
             const double gray = 0.299 * pixel[0] + 0.587 * pixel[1] + 0.114 * pixel[2];
             signature.push_back(static_cast<std::uint8_t>(std::lround(gray)));
-            mean += gray; square += gray * gray; ++samples;
+            mean += gray;
+            square += gray * gray;
+            ++samples;
         }
     }
-    if (samples) { mean /= samples; square = std::max(0.0, square / samples - mean * mean); }
+    if (samples) {
+        mean /= samples;
+        square = std::max(0.0, square / samples - mean * mean);
+    }
     if (last_frame_signature_.size() == signature.size() && !signature.empty()) {
         double absolute_difference = 0.0;
         for (std::size_t index = 0; index < signature.size(); ++index)
@@ -410,25 +423,25 @@ bool RtspReceiver::saveFrameCache(const AVFrame* rgb_frame) {
     last_frame_signature_ = std::move(signature);
     std::ofstream metadata(directory / (stem + ".json"), std::ios::trunc);
     metadata << "{\"captured_at_ms\":" << captured_at_ms
-             << ",\"receiver_frame_id\":" << decoded_frames_
-             << ",\"brightness\":" << mean << ",\"variance\":" << square
-             << ",\"difference\":" << difference << "}\n";
+             << ",\"receiver_frame_id\":" << decoded_frames_ << ",\"brightness\":" << mean
+             << ",\"variance\":" << square << ",\"difference\":" << difference << "}\n";
     metadata.close();
 
     std::vector<std::filesystem::path> cached;
     for (const auto& entry : std::filesystem::directory_iterator(directory, error))
-        if (!error && entry.path().extension() == ".jpg") cached.push_back(entry.path());
+        if (!error && entry.path().extension() == ".jpg")
+            cached.push_back(entry.path());
     std::sort(cached.begin(), cached.end());
     while (cached.size() > static_cast<std::size_t>(config_.frame_cache_max)) {
-        const std::filesystem::path old = cached.front(); cached.erase(cached.begin());
+        const std::filesystem::path old = cached.front();
+        cached.erase(cached.begin());
         std::filesystem::remove(old, error);
         std::filesystem::remove(old.parent_path() / (old.stem().string() + ".json"), error);
     }
     return true;
 }
 
-bool RtspReceiver::encodeAndWriteJpeg(const AVFrame* rgb_frame,
-                                      const std::string& image_path,
+bool RtspReceiver::encodeAndWriteJpeg(const AVFrame* rgb_frame, const std::string& image_path,
                                       bool atomic_replace) {
     if (!jpeg_context_ || !jpeg_frame_ || !jpeg_sws_context_) {
         std::cerr << "save JPEG failed: encoder is not ready\n";
@@ -439,8 +452,8 @@ bool RtspReceiver::encodeAndWriteJpeg(const AVFrame* rgb_frame,
         std::cerr << "make JPEG frame writable failed: " << errorString(result) << '\n';
         return false;
     }
-    sws_scale(jpeg_sws_context_, rgb_frame->data, rgb_frame->linesize, 0,
-              rgb_frame->height, jpeg_frame_->data, jpeg_frame_->linesize);
+    sws_scale(jpeg_sws_context_, rgb_frame->data, rgb_frame->linesize, 0, rgb_frame->height,
+              jpeg_frame_->data, jpeg_frame_->linesize);
     jpeg_frame_->pts = jpeg_sequence_++;
     result = avcodec_send_frame(jpeg_context_, jpeg_frame_);
     if (result < 0) {
@@ -498,10 +511,12 @@ void RtspReceiver::printStreamInfo() const {
               << "[stream] codec=" << avcodec_get_name(parameters->codec_id)
               << " decoder=" << decoder_->name << '\n'
               << "[stream] size=" << parameters->width << 'x' << parameters->height << '\n'
-              << "[stream] time_base=" << stream->time_base.num << '/' << stream->time_base.den << '\n'
+              << "[stream] time_base=" << stream->time_base.num << '/' << stream->time_base.den
+              << '\n'
               << "[stream] declared_fps=" << stream->r_frame_rate.num << '/'
-              << stream->r_frame_rate.den << " average_fps=" << stream->avg_frame_rate.num
-              << '/' << stream->avg_frame_rate.den << '\n' << std::flush;
+              << stream->r_frame_rate.den << " average_fps=" << stream->avg_frame_rate.num << '/'
+              << stream->avg_frame_rate.den << '\n'
+              << std::flush;
 }
 
 void RtspReceiver::printStats(bool force) {
@@ -510,19 +525,18 @@ void RtspReceiver::printStats(bool force) {
         return;
     }
     const double elapsed = std::chrono::duration<double>(now - stats_started_).count();
-    const double fps = elapsed > 0.0 ?
-        static_cast<double>(decoded_frames_ - decoded_frames_at_last_stats_) / elapsed : 0.0;
+    const double fps =
+        elapsed > 0.0
+            ? static_cast<double>(decoded_frames_ - decoded_frames_at_last_stats_) / elapsed
+            : 0.0;
     const double runtime = std::chrono::duration<double>(now - run_started_).count();
-    std::cout << "[stats] packets=" << compressed_packets_
-              << " decoded=" << decoded_frames_
-              << " fps=" << std::fixed << std::setprecision(2) << fps
-              << " snapshots=" << snapshots_
-              << " read_errors=" << read_errors_
-              << " decode_errors=" << decode_errors_
-              << " runtime_s=" << runtime
-              << " pts=" << last_pts_
-              << " best_effort_pts=" << last_best_effort_pts_
-              << " pts_s=" << last_pts_seconds_ << '\n' << std::flush;
+    std::cout << "[stats] packets=" << compressed_packets_ << " decoded=" << decoded_frames_
+              << " fps=" << std::fixed << std::setprecision(2) << fps << " snapshots=" << snapshots_
+              << " read_errors=" << read_errors_ << " decode_errors=" << decode_errors_
+              << " runtime_s=" << runtime << " pts=" << last_pts_
+              << " best_effort_pts=" << last_best_effort_pts_ << " pts_s=" << last_pts_seconds_
+              << '\n'
+              << std::flush;
     stats_started_ = now;
     decoded_frames_at_last_stats_ = decoded_frames_;
 }

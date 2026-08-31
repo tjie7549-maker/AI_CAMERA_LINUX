@@ -7,12 +7,12 @@ socket="$root/run/camera-daemon.sock"
 
 usage() { echo "Usage: $0 status|debug|display|auto|manual|restore" >&2; exit 2; }
 case "${1:-}" in
-  status) request='{"cmd":"get_status"}' ;;
-  debug) request='{"cmd":"enter_debug"}' ;;
-  display) request='{"cmd":"exit_debug"}' ;;
-  auto) request='{"cmd":"set_auto_ae","auto_ae":true}' ;;
-  manual) request='{"cmd":"set_auto_ae","auto_ae":false}' ;;
-  restore) request='{"cmd":"restore_defaults"}' ;;
-  *) usage ;;
+    status) request='{"cmd":"get_status"}' ;;
+    debug) request='{"cmd":"enter_debug"}' ;;
+    display) request='{"cmd":"exit_debug"}' ;;
+    auto) request='{"cmd":"set_auto_ae","auto_ae":true}' ;;
+    manual) request='{"cmd":"set_auto_ae","auto_ae":false}' ;;
+    restore) request='{"cmd":"restore_defaults"}' ;;
+    *) usage ;;
 esac
 exec "$client" --request "$socket" "$request"

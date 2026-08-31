@@ -27,16 +27,30 @@ class FrameCandidate:
         exposure = max(0.0, 1.0 - abs(self.brightness - 128.0) / 128.0)
         sharpness = min(1.0, self.variance / 64.0)
         area = 1.0 - min(1.0, abs(self.area - 0.18) / 0.18)
-        return 0.45 * self.confidence + 0.2 * max(0.0, area) + 0.2 * sharpness + 0.1 * exposure + 0.05 * min(1.0, self.difference)
+        return (
+            0.45 * self.confidence
+            + 0.2 * max(0.0, area)
+            + 0.2 * sharpness
+            + 0.1 * exposure
+            + 0.05 * min(1.0, self.difference)
+        )
 
 
 class FrameCache:
-    def __init__(self, root: Path, latest_image: Path, ring_dir: Path | None = None,
-                 max_frames: int = 32) -> None:
-        self.root, self.latest_image, self.ring_dir, self.max_frames = root, latest_image, ring_dir, max_frames
+    def __init__(
+        self, root: Path, latest_image: Path, ring_dir: Path | None = None, max_frames: int = 32
+    ) -> None:
+        self.root, self.latest_image, self.ring_dir, self.max_frames = (
+            root,
+            latest_image,
+            ring_dir,
+            max_frames,
+        )
         self.root.mkdir(parents=True, exist_ok=True)
 
-    def capture(self, event_id: str, frame_id: int, captured_at_ms: int, confidence: float, area: float) -> FrameCandidate | None:
+    def capture(
+        self, event_id: str, frame_id: int, captured_at_ms: int, confidence: float, area: float
+    ) -> FrameCandidate | None:
         source = self.latest_image
         source_time = captured_at_ms
         receiver_frame = 0
@@ -58,16 +72,25 @@ class FrameCache:
                     difference = float(meta.get("difference", difference))
                 except (OSError, ValueError, TypeError, json.JSONDecodeError):
                     pass
-        if not source.is_file(): return None
+        if not source.is_file():
+            return None
         target = self.root / ("%s_%d_%d.jpg" % (event_id, captured_at_ms, frame_id))
         shutil.copyfile(source, target)
         files = sorted(self.root.glob("*.jpg"), key=lambda item: item.stat().st_mtime)
-        for old in files[:-self.max_frames]: old.unlink(missing_ok=True)
-        return FrameCandidate(target, source_time, frame_id, confidence, area,
-                              brightness=brightness, variance=variance,
-                              difference=max(0.0, min(1.0, difference)),
-                              offset_ms=abs(source_time - captured_at_ms),
-                              receiver_frame_id=receiver_frame)
+        for old in files[: -self.max_frames]:
+            old.unlink(missing_ok=True)
+        return FrameCandidate(
+            target,
+            source_time,
+            frame_id,
+            confidence,
+            area,
+            brightness=brightness,
+            variance=variance,
+            difference=max(0.0, min(1.0, difference)),
+            offset_ms=abs(source_time - captured_at_ms),
+            receiver_frame_id=receiver_frame,
+        )
 
     def promote(self, event_id: str, candidate: FrameCandidate) -> FrameCandidate:
         """Copy a winning candidate outside the bounded scratch ring."""

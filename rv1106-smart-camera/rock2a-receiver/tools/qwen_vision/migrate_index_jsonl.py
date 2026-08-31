@@ -22,8 +22,9 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--index", required=True, type=Path)
     parser.add_argument("--database", required=True, type=Path)
-    parser.add_argument("--saved-root", type=Path,
-                        help="directory containing paths from saved_relative_path")
+    parser.add_argument(
+        "--saved-root", type=Path, help="directory containing paths from saved_relative_path"
+    )
     args = parser.parse_args()
     if not args.index.is_file():
         parser.error("--index does not exist")
@@ -43,8 +44,11 @@ def main() -> int:
                 if not inside(saved_root, record_dir):
                     raise ValueError("unsafe legacy path")
                 result_path = record_dir / "result.json"
-                result = json.loads(result_path.read_text(encoding="utf-8")) \
-                    if result_path.is_file() else {}
+                result = (
+                    json.loads(result_path.read_text(encoding="utf-8"))
+                    if result_path.is_file()
+                    else {}
+                )
                 document = {
                     "request_id": request_id,
                     "event_id": None,

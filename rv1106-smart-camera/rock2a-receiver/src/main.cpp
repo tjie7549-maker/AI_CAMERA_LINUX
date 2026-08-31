@@ -73,7 +73,8 @@ int main(int argc, char* argv[]) {
             } else if (option == "--frame-cache-dir") {
                 config.frame_cache_dir = value;
             } else if (option == "--frame-cache-interval-ms") {
-                config.frame_cache_interval_ms = parsePositive(value, "--frame-cache-interval-ms", false);
+                config.frame_cache_interval_ms =
+                    parsePositive(value, "--frame-cache-interval-ms", false);
             } else if (option == "--frame-cache-max") {
                 config.frame_cache_max = parsePositive(value, "--frame-cache-max", false);
             } else if (option == "--duration") {

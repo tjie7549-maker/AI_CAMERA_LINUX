@@ -7,14 +7,14 @@
 class VideoWidget : public QWidget {
     Q_OBJECT
 
-public:
+   public:
     explicit VideoWidget(QWidget *parent = nullptr);
 
-public slots:
+   public slots:
     void setFrame(const QImage &image, qulonglong frameId, qulonglong sourceTimeNs);
     void setState(int state);
 
-public:
+   public:
     bool freezeCurrentFrame();
     void resumeLivePreview();
     bool isFrozen() const;
@@ -25,10 +25,10 @@ public:
     qulonglong displayedLiveFrameId() const;
     qulonglong displayedLiveTimestampNs() const;
 
-protected:
+   protected:
     void paintEvent(QPaintEvent *event) override;
 
-private:
+   private:
     QImage latestLiveImage_;
     QImage displayedLiveImage_;
     QImage frozenImage_;

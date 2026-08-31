@@ -1,8 +1,8 @@
 #ifndef MAIN_WINDOW_H
 #define MAIN_WINDOW_H
 
-#include <QWidget>
 #include <QImage>
+#include <QWidget>
 
 #include "ai_result.h"
 
@@ -18,38 +18,35 @@ class DaemonClient;
 class MainWindow : public QWidget {
     Q_OBJECT
 
-public:
+   public:
     explicit MainWindow(ManualRecognitionClient *manualClient, ResultStorageClient *storageClient,
-                        int autoRecognitionIntervalMs,
-                        bool legacyAutoRecognitionEnabled,
-                        DaemonClient *daemonClient,
-                        QWidget *parent = nullptr);
+                        int autoRecognitionIntervalMs, bool legacyAutoRecognitionEnabled,
+                        DaemonClient *daemonClient, QWidget *parent = nullptr);
 
-public slots:
+   public slots:
     void updateAiResult(const AiResult &result);
     void updateConnectionState(const QString &state);
     void updateCurrentTime();
     void updateAiState(const QString &state);
     void updateError(const QString &message);
-    void updatePreviewFrame(const QImage &image, qulonglong frameId,
-                            qulonglong sourceTimeNs);
+    void updatePreviewFrame(const QImage &image, qulonglong frameId, qulonglong sourceTimeNs);
     void updatePreviewState(int state);
     void updatePreviewStats(const QString &line1, const QString &line2);
     void onRecognitionRequestStarted(const QString &source, const QString &requestId,
                                      quint64 frameId, int jpegBytes);
     void onRecognitionRequestSucceeded(const QString &source, const QString &requestId,
-                                       quint64 frameId,
-                                  const QJsonObject &result, qint64 elapsedMs);
+                                       quint64 frameId, const QJsonObject &result,
+                                       qint64 elapsedMs);
     void onRecognitionRequestFailed(const QString &source, const QString &requestId,
-                                    quint64 frameId, const QString &message,
-                                    int httpStatus, qint64 elapsedMs);
-    void onSaveSucceeded(const QString&,const QString&,const QString&,bool);
-    void onSaveFailed(const QString&,const QString&);
+                                    quint64 frameId, const QString &message, int httpStatus,
+                                    qint64 elapsedMs);
+    void onSaveSucceeded(const QString &, const QString &, const QString &, bool);
+    void onSaveFailed(const QString &, const QString &);
     void onActiveEventRecovered(const QJsonObject &event);
-signals:
+   signals:
     void userExitRequested();
 
-private:
+   private:
     enum class PreviewUiState {
         Live,
         Frozen,
@@ -63,7 +60,9 @@ private:
         quint64 frameId = 0;
         quint64 timestampNs = 0;
 
-        bool isValid() const { return !image.isNull() && frameId > 0; }
+        bool isValid() const {
+            return !image.isNull() && frameId > 0;
+        }
     };
 
     void buildUi();
@@ -77,8 +76,7 @@ private:
     void updateVideoStatus();
     void applyManualResult(const AiResult &result, qint64 totalElapsedMs);
     void applyEventResult(const AiResult &result);
-    void setStateLabel(QLabel *label, const QString &text,
-                       const QString &state);
+    void setStateLabel(QLabel *label, const QString &text, const QString &state);
 
     QLabel *clockLabel_;
     QLabel *videoStatusLabel_;
@@ -91,7 +89,8 @@ private:
     ResultStorageClient *storageClient_;
     QPushButton *pauseButton_;
     QPushButton *recognizeButton_;
-    QPushButton *saveResultButton_; QPushButton *exitButton_;
+    QPushButton *saveResultButton_;
+    QPushButton *exitButton_;
     QPushButton *debugButton_;
     DaemonClient *daemonClient_;
 
@@ -127,7 +126,8 @@ private:
     quint64 activeRequestTimestampNs_;
     quint64 manualRequestSequence_;
     quint64 autoRequestSequence_;
-    QString saveSource_, saveRequestId_; bool exitConfirm_;
+    QString saveSource_, saveRequestId_;
+    bool exitConfirm_;
     QString currentEventId_;
     QString currentEventState_;
 };

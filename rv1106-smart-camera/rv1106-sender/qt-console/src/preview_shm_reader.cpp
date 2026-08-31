@@ -1,9 +1,5 @@
 #include "preview_shm_reader.h"
 
-#include <QTimer>
-#include <QDebug>
-
-#include <cstring>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
@@ -12,17 +8,20 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <QDebug>
+#include <QTimer>
+#include <cstring>
+
 #include "preview_shm_protocol.h"
 
 namespace {
-qulonglong monotonicNs()
-{
+qulonglong monotonicNs() {
     timespec value = {};
     clock_gettime(CLOCK_MONOTONIC, &value);
     return static_cast<qulonglong>(value.tv_sec) * 1000000000ULL +
            static_cast<qulonglong>(value.tv_nsec);
 }
-} // namespace
+}  // namespace
 
 PreviewShmReader::PreviewShmReader(QString name, int timeoutMs, QObject *parent)
     : QObject(parent),
@@ -38,33 +37,29 @@ PreviewShmReader::PreviewShmReader(QString name, int timeoutMs, QObject *parent)
       state_(Offline),
       lastFrameId_(0),
       statsStartNs_(0),
-      statsFrames_(0)
-{
+      statsFrames_(0) {
+    // 50 ms 轮询元数据；超时阈值由调用方决定何时将预览标为离线。
     connect(timer_, &QTimer::timeout, this, &PreviewShmReader::poll);
     timer_->setInterval(50);
 }
 
-PreviewShmReader::~PreviewShmReader()
-{
+PreviewShmReader::~PreviewShmReader() {
     stop();
 }
 
-void PreviewShmReader::start()
-{
+void PreviewShmReader::start() {
     timer_->start();
     poll();
 }
 
-void PreviewShmReader::stop()
-{
+void PreviewShmReader::stop() {
     timer_->stop();
     closeBuffers();
     closeMapping();
     setState(Offline);
 }
 
-bool PreviewShmReader::openMapping()
-{
+bool PreviewShmReader::openMapping() {
     struct stat status = {};
     PreviewShmHeader *header;
 
@@ -83,13 +78,11 @@ bool PreviewShmReader::openMapping()
         return false;
     }
     header = static_cast<PreviewShmHeader *>(mapping_);
-    if (header->magic != PREVIEW_SHM_MAGIC ||
-        header->version != PREVIEW_SHM_VERSION ||
+    if (header->magic != PREVIEW_SHM_MAGIC || header->version != PREVIEW_SHM_VERSION ||
         header->header_size != sizeof(PreviewShmHeader) ||
         header->pixel_format != PREVIEW_SHM_PIXFMT_RGB888 ||
-        header->buffer_count != PREVIEW_SHM_BUFFER_COUNT ||
-        header->width == 0 || header->height == 0 ||
-        header->stride < header->width * 3U) {
+        header->buffer_count != PREVIEW_SHM_BUFFER_COUNT || header->width == 0 ||
+        header->height == 0 || header->stride < header->width * 3U) {
         closeMapping();
         return false;
     }
@@ -97,8 +90,7 @@ bool PreviewShmReader::openMapping()
     return true;
 }
 
-bool PreviewShmReader::receiveBufferFds()
-{
+bool PreviewShmReader::receiveBufferFds() {
     sockaddr_un address = {};
     PreviewFdMessage message = {};
     iovec iov = {};
@@ -113,8 +105,7 @@ bool PreviewShmReader::receiveBufferFds()
     if (socketFd < 0)
         return false;
     address.sun_family = AF_UNIX;
-    std::strncpy(address.sun_path, PREVIEW_FD_SOCKET_PATH,
-                 sizeof(address.sun_path) - 1);
+    std::strncpy(address.sun_path, PREVIEW_FD_SOCKET_PATH, sizeof(address.sun_path) - 1);
     if (::connect(socketFd, reinterpret_cast<sockaddr *>(&address), sizeof(address)) != 0) {
         close(socketFd);
         return false;
@@ -128,10 +119,8 @@ bool PreviewShmReader::receiveBufferFds()
     received = recvmsg(socketFd, &header, 0);
     close(socketFd);
     if (received != static_cast<ssize_t>(sizeof(message)) ||
-        message.magic != PREVIEW_FD_MESSAGE_MAGIC ||
-        message.version != PREVIEW_SHM_VERSION ||
-        message.width == 0 || message.height == 0 ||
-        message.stride < message.width * 3U ||
+        message.magic != PREVIEW_FD_MESSAGE_MAGIC || message.version != PREVIEW_SHM_VERSION ||
+        message.width == 0 || message.height == 0 || message.stride < message.width * 3U ||
         message.pixel_format != PREVIEW_SHM_PIXFMT_RGB888 ||
         message.buffer_count != PREVIEW_SHM_BUFFER_COUNT) {
         return false;
@@ -143,8 +132,8 @@ bool PreviewShmReader::receiveBufferFds()
     }
     std::memcpy(receivedFds, CMSG_DATA(cmsg), sizeof(receivedFds));
     for (int index = 0; index < 2; ++index) {
-        bufferMappings_[index] = mmap(nullptr, bufferBytes_, PROT_READ, MAP_SHARED,
-                                      receivedFds[index], 0);
+        bufferMappings_[index] =
+            mmap(nullptr, bufferBytes_, PROT_READ, MAP_SHARED, receivedFds[index], 0);
         if (bufferMappings_[index] == MAP_FAILED) {
             bufferMappings_[index] = nullptr;
             close(receivedFds[index]);
@@ -154,13 +143,12 @@ bool PreviewShmReader::receiveBufferFds()
         }
         bufferFds_[index] = receivedFds[index];
     }
-    qInfo("#Preview: received %u DMA-BUF frames (%ux%u RGB888)",
-          message.buffer_count, message.width, message.height);
+    qInfo("#Preview: received %u DMA-BUF frames (%ux%u RGB888)", message.buffer_count,
+          message.width, message.height);
     return true;
 }
 
-void PreviewShmReader::closeMapping()
-{
+void PreviewShmReader::closeMapping() {
     if (mapping_) {
         munmap(mapping_, mappingBytes_);
         mapping_ = nullptr;
@@ -172,8 +160,7 @@ void PreviewShmReader::closeMapping()
     }
 }
 
-void PreviewShmReader::closeBuffers()
-{
+void PreviewShmReader::closeBuffers() {
     for (int index = 0; index < 2; ++index) {
         if (bufferMappings_[index]) {
             munmap(bufferMappings_[index], bufferBytes_);
@@ -187,19 +174,16 @@ void PreviewShmReader::closeBuffers()
     bufferBytes_ = 0;
 }
 
-void PreviewShmReader::setState(State state)
-{
+void PreviewShmReader::setState(State state) {
     if (state_ == state)
         return;
     state_ = state;
-    const char *name = state_ == Online ? "online" :
-                       (state_ == Stale ? "stale" : "offline");
+    const char *name = state_ == Online ? "online" : (state_ == Stale ? "stale" : "offline");
     qInfo("#Preview: state=%s", name);
     emit stateChanged(static_cast<int>(state_));
 }
 
-void PreviewShmReader::poll()
-{
+void PreviewShmReader::poll() {
     PreviewShmHeader *header;
     qulonglong nowNs;
     uint32_t before;
@@ -241,8 +225,7 @@ void PreviewShmReader::poll()
         return;
     QImage image(static_cast<int>(header->width), static_cast<int>(header->height),
                  QImage::Format_RGB888);
-    const unsigned char *source = static_cast<const unsigned char *>(
-        bufferMappings_[activeIndex]);
+    const unsigned char *source = static_cast<const unsigned char *>(bufferMappings_[activeIndex]);
     for (uint32_t row = 0; row < header->height; ++row) {
         std::memcpy(image.scanLine(static_cast<int>(row)),
                     source + static_cast<size_t>(row) * header->stride,

@@ -5,11 +5,11 @@ set -eu
 usage() { echo "Usage: $0 [--env BUILD_ENV]" >&2; exit 2; }
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --env) shift; [ "$#" -gt 0 ] || usage; . "$1" ;;
-    *) usage ;;
-  esac
-  shift
+    case "$1" in
+        --env) shift; [ "$#" -gt 0 ] || usage; . "$1" ;;
+        *) usage ;;
+    esac
+    shift
 done
 sdk_dir=${SDK_DIR:-/home/summary/linux/luckfox-pico}
 qmake=${QMAKE:-$sdk_dir/sysdrv/source/buildroot/buildroot-2023.02.6/output/host/bin/qmake}

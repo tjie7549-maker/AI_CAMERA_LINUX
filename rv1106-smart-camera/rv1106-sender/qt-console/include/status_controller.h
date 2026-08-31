@@ -9,20 +9,20 @@
 class StatusController : public QObject {
     Q_OBJECT
 
-public:
+   public:
     explicit StatusController(QObject *parent = nullptr);
 
-public slots:
+   public slots:
     void markAiResultReceived();
     void resetAiState();
 
-signals:
+   signals:
     void aiStateChanged(const QString &state);
 
-private slots:
+   private slots:
     void updateAiState();
 
-private:
+   private:
     void publishState(const QString &state);
 
     QElapsedTimer lastResultTimer_;

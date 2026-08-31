@@ -13,7 +13,7 @@
 namespace {
 const int kTimeoutMs = 30000;
 const int kMaximumJpegBytes = 1024 * 1024;
-}
+}  // namespace
 
 ManualRecognitionClient::ManualRecognitionClient(QObject *parent)
     : QObject(parent),
@@ -22,31 +22,26 @@ ManualRecognitionClient::ManualRecognitionClient(QObject *parent)
       timeoutTimer_(new QTimer(this)),
       frameId_(0),
       timestampNs_(0),
-      startedMs_(0)
-{
+      startedMs_(0) {
     timeoutTimer_->setSingleShot(true);
-    connect(timeoutTimer_, &QTimer::timeout, this, [this]() {
-        failCurrent(QStringLiteral("识别请求超时"), 0, true);
-    });
+    connect(timeoutTimer_, &QTimer::timeout, this,
+            [this]() { failCurrent(QStringLiteral("识别请求超时"), 0, true); });
 }
 
-void ManualRecognitionClient::setRecognizeUrl(const QUrl &url)
-{
+void ManualRecognitionClient::setRecognizeUrl(const QUrl &url) {
     url_ = url;
 }
 
-bool ManualRecognitionClient::isBusy() const
-{
+bool ManualRecognitionClient::isBusy() const {
     return reply_ != nullptr;
 }
 
 bool ManualRecognitionClient::recognize(const QString &source, const QImage &image,
                                         const QString &requestId, quint64 frameId,
-                                        quint64 timestampNs)
-{
-    if ((source != QStringLiteral("manual") && source != QStringLiteral("auto")) ||
-        isBusy() || image.isNull() || requestId.isEmpty() || frameId == 0 ||
-        !url_.isValid() || url_.scheme() != QStringLiteral("http")) {
+                                        quint64 timestampNs) {
+    if ((source != QStringLiteral("manual") && source != QStringLiteral("auto")) || isBusy() ||
+        image.isNull() || requestId.isEmpty() || frameId == 0 || !url_.isValid() ||
+        url_.scheme() != QStringLiteral("http")) {
         return false;
     }
 
@@ -81,21 +76,18 @@ bool ManualRecognitionClient::recognize(const QString &source, const QImage &ima
     timeoutTimer_->start(kTimeoutMs);
     qInfo("[Recognition] start source=%s request_id=%s frame_id=%llu jpeg_bytes=%d encode_ms=%lld",
           source_.toLocal8Bit().constData(), requestId_.toLocal8Bit().constData(),
-          static_cast<unsigned long long>(frameId_),
-          jpegData.size(), static_cast<long long>(startedMs_ - encodeStartedMs));
+          static_cast<unsigned long long>(frameId_), jpegData.size(),
+          static_cast<long long>(startedMs_ - encodeStartedMs));
     emit requestStarted(source_, requestId_, frameId_, jpegData.size());
     connect(reply_, &QNetworkReply::finished, this, &ManualRecognitionClient::finishReply);
     return true;
 }
 
-void ManualRecognitionClient::abort()
-{
+void ManualRecognitionClient::abort() {
     failCurrent(QStringLiteral("识别已取消"), 0, true);
 }
 
-void ManualRecognitionClient::failCurrent(const QString &message, int httpStatus,
-                                          bool abortReply)
-{
+void ManualRecognitionClient::failCurrent(const QString &message, int httpStatus, bool abortReply) {
     if (!reply_)
         return;
     QNetworkReply *reply = reply_;
@@ -109,13 +101,12 @@ void ManualRecognitionClient::failCurrent(const QString &message, int httpStatus
     reply->deleteLater();
     qWarning("[Recognition] failed source=%s request_id=%s frame_id=%llu status=%d error=%s",
              source_.toLocal8Bit().constData(), requestId_.toLocal8Bit().constData(),
-             static_cast<unsigned long long>(frameId_),
-             httpStatus, message.toLocal8Bit().constData());
+             static_cast<unsigned long long>(frameId_), httpStatus,
+             message.toLocal8Bit().constData());
     emit requestFailed(source_, requestId_, frameId_, message, httpStatus, elapsedMs);
 }
 
-void ManualRecognitionClient::finishReply()
-{
+void ManualRecognitionClient::finishReply() {
     if (!reply_)
         return;
     QNetworkReply *reply = reply_;
@@ -135,9 +126,11 @@ void ManualRecognitionClient::finishReply()
     }
     const QJsonObject result = document.object();
     if (!result.value(QStringLiteral("success")).toBool(false)) {
-        failCurrent(result.value(QStringLiteral("error_message")).toString(
-                        result.value(QStringLiteral("error")).toString(QStringLiteral("识别失败"))),
-                    httpStatus, false);
+        failCurrent(
+            result.value(QStringLiteral("error_message"))
+                .toString(
+                    result.value(QStringLiteral("error")).toString(QStringLiteral("识别失败"))),
+            httpStatus, false);
         return;
     }
 
@@ -150,7 +143,6 @@ void ManualRecognitionClient::finishReply()
     reply->deleteLater();
     qInfo("[Recognition] success source=%s request_id=%s frame_id=%llu elapsed_ms=%lld",
           source.toLocal8Bit().constData(), requestId.toLocal8Bit().constData(),
-          static_cast<unsigned long long>(frameId),
-          static_cast<long long>(elapsedMs));
+          static_cast<unsigned long long>(frameId), static_cast<long long>(elapsedMs));
     emit requestSucceeded(source, requestId, frameId, result, elapsedMs);
 }

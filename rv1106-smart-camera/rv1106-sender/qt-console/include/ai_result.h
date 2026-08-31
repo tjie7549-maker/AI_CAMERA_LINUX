@@ -31,8 +31,7 @@ struct AiResult {
           maxPeople(0),
           trackCount(0),
           durationMs(0),
-          bestFrameId(0)
-    {
+          bestFrameId(0) {
     }
 
     QString scene;

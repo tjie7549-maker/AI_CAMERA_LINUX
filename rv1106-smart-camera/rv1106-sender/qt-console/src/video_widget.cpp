@@ -14,15 +14,12 @@ VideoWidget::VideoWidget(QWidget *parent)
       frozenFrameId_(0),
       frozenTimestampNs_(0),
       frozen_(false),
-      state_(PreviewShmReader::Offline)
-{
+      state_(PreviewShmReader::Offline) {
     setObjectName(QStringLiteral("previewFrame"));
     setFixedSize(380, 214);
 }
 
-void VideoWidget::setFrame(const QImage &image, qulonglong frameId,
-                           qulonglong sourceTimeNs)
-{
+void VideoWidget::setFrame(const QImage &image, qulonglong frameId, qulonglong sourceTimeNs) {
     latestLiveImage_ = image;
     latestLiveFrameId_ = frameId;
     latestLiveTimestampNs_ = sourceTimeNs;
@@ -30,14 +27,12 @@ void VideoWidget::setFrame(const QImage &image, qulonglong frameId,
         update();
 }
 
-void VideoWidget::setState(int state)
-{
+void VideoWidget::setState(int state) {
     state_ = state;
     update();
 }
 
-bool VideoWidget::freezeCurrentFrame()
-{
+bool VideoWidget::freezeCurrentFrame() {
     if (displayedLiveImage_.isNull())
         return false;
 
@@ -52,11 +47,9 @@ bool VideoWidget::freezeCurrentFrame()
     return true;
 }
 
-void VideoWidget::resumeLivePreview()
-{
-    const qulonglong frameDelta = latestLiveFrameId_ >= frozenFrameId_
-                                      ? latestLiveFrameId_ - frozenFrameId_
-                                      : 0;
+void VideoWidget::resumeLivePreview() {
+    const qulonglong frameDelta =
+        latestLiveFrameId_ >= frozenFrameId_ ? latestLiveFrameId_ - frozenFrameId_ : 0;
     frozen_ = false;
     qInfo("[Preview] resumed latest_frame_id=%llu frame_delta=%llu",
           static_cast<unsigned long long>(latestLiveFrameId_),
@@ -64,43 +57,35 @@ void VideoWidget::resumeLivePreview()
     update();
 }
 
-bool VideoWidget::isFrozen() const
-{
+bool VideoWidget::isFrozen() const {
     return frozen_;
 }
 
-QImage VideoWidget::frozenImageCopy() const
-{
+QImage VideoWidget::frozenImageCopy() const {
     return frozenImage_.copy();
 }
 
-qulonglong VideoWidget::frozenFrameId() const
-{
+qulonglong VideoWidget::frozenFrameId() const {
     return frozenFrameId_;
 }
 
-qulonglong VideoWidget::frozenTimestampNs() const
-{
+qulonglong VideoWidget::frozenTimestampNs() const {
     return frozenTimestampNs_;
 }
 
-QImage VideoWidget::displayedLiveImageCopy() const
-{
+QImage VideoWidget::displayedLiveImageCopy() const {
     return displayedLiveImage_.copy();
 }
 
-qulonglong VideoWidget::displayedLiveFrameId() const
-{
+qulonglong VideoWidget::displayedLiveFrameId() const {
     return displayedLiveFrameId_;
 }
 
-qulonglong VideoWidget::displayedLiveTimestampNs() const
-{
+qulonglong VideoWidget::displayedLiveTimestampNs() const {
     return displayedLiveTimestampNs_;
 }
 
-void VideoWidget::paintEvent(QPaintEvent *event)
-{
+void VideoWidget::paintEvent(QPaintEvent *event) {
     Q_UNUSED(event)
     QPainter painter(this);
     const QRect bounds = rect().adjusted(1, 1, -1, -1);
@@ -114,8 +99,8 @@ void VideoWidget::paintEvent(QPaintEvent *event)
             displayedLiveTimestampNs_ = latestLiveTimestampNs_;
         }
         const QSize rendered = image->size().scaled(bounds.size(), Qt::KeepAspectRatio);
-        const QRect target(QPoint((width() - rendered.width()) / 2,
-                                  (height() - rendered.height()) / 2), rendered);
+        const QRect target(
+            QPoint((width() - rendered.width()) / 2, (height() - rendered.height()) / 2), rendered);
         painter.drawImage(target, *image);
     } else {
         painter.setPen(QColor(QStringLiteral("#d7e0e7")));
@@ -129,19 +114,16 @@ void VideoWidget::paintEvent(QPaintEvent *event)
         titleFont.setPointSize(13);
         titleFont.setBold(false);
         painter.setFont(titleFont);
-        const QString message = state_ == PreviewShmReader::Stale
-                                    ? QStringLiteral("视频超时")
-                                    : QStringLiteral("等待视频输入");
+        const QString message = state_ == PreviewShmReader::Stale ? QStringLiteral("视频超时")
+                                                                  : QStringLiteral("等待视频输入");
         painter.drawText(bounds.adjusted(0, 18, 0, 0), Qt::AlignCenter, message);
     }
 
     if (state_ != PreviewShmReader::Online) {
-        painter.setPen(state_ == PreviewShmReader::Stale
-                           ? QColor(QStringLiteral("#f3b455"))
-                           : QColor(QStringLiteral("#9aa8b5")));
+        painter.setPen(state_ == PreviewShmReader::Stale ? QColor(QStringLiteral("#f3b455"))
+                                                         : QColor(QStringLiteral("#9aa8b5")));
         painter.drawText(bounds.adjusted(8, 6, -8, -6), Qt::AlignTop | Qt::AlignRight,
-                         state_ == PreviewShmReader::Stale
-                             ? QStringLiteral("视频超时")
-                             : QStringLiteral("视频离线"));
+                         state_ == PreviewShmReader::Stale ? QStringLiteral("视频超时")
+                                                           : QStringLiteral("视频离线"));
     }
 }

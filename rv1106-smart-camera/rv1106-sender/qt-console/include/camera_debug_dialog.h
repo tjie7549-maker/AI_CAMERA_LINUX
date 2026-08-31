@@ -14,14 +14,15 @@ class QVBoxLayout;
 
 class CameraDebugDialog : public QDialog {
     Q_OBJECT
-public:
+   public:
     explicit CameraDebugDialog(DaemonClient *client, QWidget *parent = nullptr);
-public slots:
+   public slots:
     void updateStatus(const QString &json);
     void showDaemonError(const QString &message);
-private:
-    void addControl(QVBoxLayout *layout, const QString &title, const QString &id,
-                    int minimum, int maximum);
+
+   private:
+    void addControl(QVBoxLayout *layout, const QString &title, const QString &id, int minimum,
+                    int maximum);
     void editControl(const QString &id);
     void restoreDefaults();
     DaemonClient *client_;

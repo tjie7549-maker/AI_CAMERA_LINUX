@@ -33,8 +33,8 @@ typedef struct __attribute__((aligned(64))) {
 
 #define PREVIEW_SHM_IMAGE_BYTES(width, height, stride) ((uint64_t)(height) * (stride))
 #define PREVIEW_SHM_TOTAL_BYTES(width, height, stride) \
-    (sizeof(PreviewShmHeader) + PREVIEW_SHM_BUFFER_COUNT * \
-     PREVIEW_SHM_IMAGE_BYTES((width), (height), (stride)))
+    (sizeof(PreviewShmHeader) +                        \
+     PREVIEW_SHM_BUFFER_COUNT * PREVIEW_SHM_IMAGE_BYTES((width), (height), (stride)))
 
 typedef struct {
     uint32_t magic;

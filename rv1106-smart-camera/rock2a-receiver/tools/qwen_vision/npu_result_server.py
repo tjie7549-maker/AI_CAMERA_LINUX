@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Receive local NPU detection messages from the RV1106 and publish the latest."""
+"""接收 RV1106 本地 NPU 检测消息并发布最新状态。
+
+TCP 输入按换行分帧；服务同时保存完整轨迹状态、生成 Qt 兼容显示文档，
+并异步转发给事件 HTTP 服务，避免网络转发阻塞接收端。
+"""
 
 from __future__ import annotations
 
@@ -23,8 +27,12 @@ def write_json_atomically(path: Path, document: dict[str, Any]) -> None:
     temporary_name = ""
     try:
         with NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=path.parent,
-            prefix=path.name + ".", suffix=".tmp", delete=False,
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=path.name + ".",
+            suffix=".tmp",
+            delete=False,
         ) as temporary:
             temporary_name = temporary.name
             json.dump(document, temporary, ensure_ascii=False, separators=(",", ":"))
@@ -44,7 +52,10 @@ def parse_line(line: bytes) -> Optional[dict[str, Any]]:
         return None
     if not isinstance(document, dict):
         return None
-    if document.get("type") != "npu" and document.get("message_type") not in {"detection", "track.update"}:
+    if document.get("type") != "npu" and document.get("message_type") not in {
+        "detection",
+        "track.update",
+    }:
         return None
     return document
 
@@ -52,8 +63,19 @@ def parse_line(line: bytes) -> Optional[dict[str, Any]]:
 def to_display_document(document: dict[str, Any]) -> dict[str, Any]:
     """Shape the wire message into the schema the RV1106 Qt UI expects."""
     try:
-        people = int(document.get("peopleCount", document.get("people_count",
-                     len(document.get("tracks", [])) if isinstance(document.get("tracks"), list) else 0)))
+        people = int(
+            document.get(
+                "peopleCount",
+                document.get(
+                    "people_count",
+                    (
+                        len(document.get("tracks", []))
+                        if isinstance(document.get("tracks"), list)
+                        else 0
+                    ),
+                ),
+            )
+        )
     except (TypeError, ValueError):
         people = 0
     if people < 0:
@@ -102,9 +124,16 @@ def to_state_document(document: dict[str, Any], display: dict[str, Any]) -> dict
 
 
 class NpuResultServer:
-    def __init__(self, host: str, port: int, result_path: Path,
-                 display_path: Path, event_path: Path,
-                 event_url: str = "", max_line: int = 65536) -> None:
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        result_path: Path,
+        display_path: Path,
+        event_path: Path,
+        event_url: str = "",
+        max_line: int = 65536,
+    ) -> None:
         self.host = host
         self.port = port
         self.result_path = result_path
@@ -122,9 +151,15 @@ class NpuResultServer:
         while True:
             document = self._event_queue.get()
             try:
-                data = json.dumps(document, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-                request = urllib.request.Request(self.event_url, data=data,
-                                                 headers={"Content-Type": "application/json"}, method="POST")
+                data = json.dumps(document, ensure_ascii=False, separators=(",", ":")).encode(
+                    "utf-8"
+                )
+                request = urllib.request.Request(
+                    self.event_url,
+                    data=data,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
                 with urllib.request.urlopen(request, timeout=1.0) as response:
                     response.read(1024)
             except (OSError, urllib.error.URLError) as error:
@@ -151,10 +186,7 @@ class NpuResultServer:
                 write_json_atomically(self.display_path, display)
                 self.event_path.parent.mkdir(parents=True, exist_ok=True)
                 with self.event_path.open("a", encoding="utf-8") as log:
-                    log.write(
-                        json.dumps(display, ensure_ascii=False, separators=(",", ":"))
-                        + "\n"
-                    )
+                    log.write(json.dumps(display, ensure_ascii=False, separators=(",", ":")) + "\n")
                 self._display_key = display_key
         if self.event_url:
             forwarded = dict(document)
@@ -162,7 +194,11 @@ class NpuResultServer:
             try:
                 self._event_queue.put_nowait(forwarded)
             except queue.Full:
-                print("[npu-server] event queue full; dropping newest message", file=sys.stderr, flush=True)
+                print(
+                    "[npu-server] event queue full; dropping newest message",
+                    file=sys.stderr,
+                    flush=True,
+                )
         print(
             f"[npu] people={people} active={display['sentinel_active']} "
             f"display={display['display_awake']} "
@@ -197,8 +233,11 @@ class NpuResultServer:
                         break
                     buffer += chunk
                     if len(buffer) > self.max_line and b"\n" not in buffer:
-                        print("[npu-server] unterminated oversized line rejected",
-                              file=sys.stderr, flush=True)
+                        print(
+                            "[npu-server] unterminated oversized line rejected",
+                            file=sys.stderr,
+                            flush=True,
+                        )
                         buffer = b""
                         continue
                     while b"\n" in buffer:
@@ -207,7 +246,9 @@ class NpuResultServer:
                         if not line:
                             continue
                         if len(line) > self.max_line:
-                            print("[npu-server] oversized line rejected", file=sys.stderr, flush=True)
+                            print(
+                                "[npu-server] oversized line rejected", file=sys.stderr, flush=True
+                            )
                             continue
                         document = parse_line(line)
                         if document is not None:

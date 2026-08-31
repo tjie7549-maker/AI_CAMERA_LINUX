@@ -1,8 +1,8 @@
 #ifndef MANUAL_RECOGNITION_CLIENT_H
 #define MANUAL_RECOGNITION_CLIENT_H
 
-#include <QObject>
 #include <QJsonObject>
+#include <QObject>
 #include <QUrl>
 
 class QImage;
@@ -13,28 +13,24 @@ class QTimer;
 class ManualRecognitionClient : public QObject {
     Q_OBJECT
 
-public:
+   public:
     explicit ManualRecognitionClient(QObject *parent = nullptr);
 
     void setRecognizeUrl(const QUrl &url);
     bool isBusy() const;
-    bool recognize(const QString &source, const QImage &image,
-                   const QString &requestId, quint64 frameId,
-                   quint64 timestampNs);
+    bool recognize(const QString &source, const QImage &image, const QString &requestId,
+                   quint64 frameId, quint64 timestampNs);
     void abort();
 
-signals:
-    void requestStarted(const QString &source, const QString &requestId,
-                        quint64 frameId, int jpegBytes);
-    void requestSucceeded(const QString &source, const QString &requestId,
-                          quint64 frameId,
+   signals:
+    void requestStarted(const QString &source, const QString &requestId, quint64 frameId,
+                        int jpegBytes);
+    void requestSucceeded(const QString &source, const QString &requestId, quint64 frameId,
                           const QJsonObject &result, qint64 totalElapsedMs);
-    void requestFailed(const QString &source, const QString &requestId,
-                       quint64 frameId,
-                       const QString &errorMessage, int httpStatus,
-                       qint64 totalElapsedMs);
+    void requestFailed(const QString &source, const QString &requestId, quint64 frameId,
+                       const QString &errorMessage, int httpStatus, qint64 totalElapsedMs);
 
-private:
+   private:
     void failCurrent(const QString &message, int httpStatus, bool abortReply);
     void finishReply();
 

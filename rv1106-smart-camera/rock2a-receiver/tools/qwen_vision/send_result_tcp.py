@@ -10,7 +10,6 @@ import time
 from pathlib import Path
 from typing import Any, Optional, Tuple
 
-
 SENSITIVE_KEYS = {
     "api_key",
     "apikey",
@@ -27,8 +26,13 @@ def parse_args() -> argparse.Namespace:
         description="Send an updated AI result file as newline-delimited JSON"
     )
     parser.add_argument("--input", required=True, type=Path)
-    parser.add_argument("--extra-input", action="append", type=Path, default=[],
-                        help="additional result files to stream (repeatable)")
+    parser.add_argument(
+        "--extra-input",
+        action="append",
+        type=Path,
+        default=[],
+        help="additional result files to stream (repeatable)",
+    )
     parser.add_argument("--host", default="192.168.50.1")
     parser.add_argument("--port", type=int, default=9000)
     parser.add_argument("--poll-interval", type=float, default=0.25)
@@ -51,9 +55,7 @@ def parse_args() -> argparse.Namespace:
 def sanitize(value: Any) -> Any:
     if isinstance(value, dict):
         return {
-            key: sanitize(item)
-            for key, item in value.items()
-            if key.lower() not in SENSITIVE_KEYS
+            key: sanitize(item) for key, item in value.items() if key.lower() not in SENSITIVE_KEYS
         }
     if isinstance(value, list):
         return [sanitize(item) for item in value]
@@ -79,10 +81,9 @@ def load_message(path: Path) -> Optional[bytes]:
         return None
 
     clean_payload = sanitize(payload)
-    message = (
-        json.dumps(clean_payload, ensure_ascii=False, separators=(",", ":"))
-        + "\n"
-    ).encode("utf-8")
+    message = (json.dumps(clean_payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode(
+        "utf-8"
+    )
     if len(message) > MAX_MESSAGE_BYTES:
         print(f"Input error: {path} exceeds 64 KiB", file=sys.stderr, flush=True)
         return None
@@ -103,9 +104,13 @@ def client_closed(client: socket.socket, timeout: float) -> bool:
     return False
 
 
-def serve_client(client: socket.socket, address: Tuple[str, int],
-                 input_paths: list, poll_interval: float,
-                 primary_hold_seconds: float) -> None:
+def serve_client(
+    client: socket.socket,
+    address: Tuple[str, int],
+    input_paths: list,
+    poll_interval: float,
+    primary_hold_seconds: float,
+) -> None:
     print(f"Client connected: {address[0]}:{address[1]}", flush=True)
     last_fingerprints: dict = {}
     primary_path = input_paths[0]
@@ -135,8 +140,9 @@ def serve_client(client: socket.socket, address: Tuple[str, int],
                 primary_hold_until = time.monotonic() + primary_hold_seconds
 
 
-def run_server(host: str, port: int, input_paths: list,
-               poll_interval: float, primary_hold_seconds: float) -> None:
+def run_server(
+    host: str, port: int, input_paths: list, poll_interval: float, primary_hold_seconds: float
+) -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server.bind((host, port))

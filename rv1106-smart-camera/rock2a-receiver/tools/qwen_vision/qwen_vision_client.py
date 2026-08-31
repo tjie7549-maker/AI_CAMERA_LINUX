@@ -22,7 +22,6 @@ from openai import (
 
 from prompts import SYSTEM_PROMPT, USER_PROMPT
 
-
 SUPPORTED_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
 REQUIRED_RESULT_KEYS = {
     "scene",
@@ -72,7 +71,9 @@ class QwenVisionClient:
         if not path.is_file():
             return self._failure("file_not_found", "image file does not exist", started)
         if path.suffix.lower() not in SUPPORTED_SUFFIXES:
-            return self._failure("unsupported_image", "supported formats: jpg, jpeg, png, webp", started)
+            return self._failure(
+                "unsupported_image", "supported formats: jpg, jpeg, png, webp", started
+            )
 
         try:
             image_bytes = path.read_bytes()
@@ -141,13 +142,19 @@ class QwenVisionClient:
         latency_ms = self._elapsed_ms(started)
         content = response.choices[0].message.content if response.choices else None
         if not content or not content.strip():
-            return self._failure("empty_response", "model returned an empty response", started, latency_ms)
+            return self._failure(
+                "empty_response", "model returned an empty response", started, latency_ms
+            )
         try:
             parsed = json.loads(content)
         except json.JSONDecodeError:
-            return self._failure("invalid_json", "model response is not valid JSON", started, latency_ms)
+            return self._failure(
+                "invalid_json", "model response is not valid JSON", started, latency_ms
+            )
         if not self._valid_result(parsed):
-            return self._failure("invalid_json", "model JSON does not match the required schema", started, latency_ms)
+            return self._failure(
+                "invalid_json", "model JSON does not match the required schema", started, latency_ms
+            )
 
         usage = getattr(response, "usage", None)
         input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)

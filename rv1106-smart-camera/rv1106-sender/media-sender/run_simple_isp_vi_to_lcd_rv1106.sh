@@ -22,7 +22,7 @@ preview_height=216
 preview_fps=15
 
 usage() {
-	cat <<EOF
+    cat <<EOF
 Usage: $0 [0|90|180|270] [options]
 
 Default pipeline: 2304x1296 sensor -> 720x720 LCD, rotate 180, no H.264 file.
@@ -50,229 +50,229 @@ EOF
 }
 
 require_value() {
-	if [ "$#" -lt 2 ] || [ -z "$2" ]; then
-		echo "Missing value for $1" >&2
-		exit 1
-	fi
+    if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+        echo "Missing value for $1" >&2
+        exit 1
+    fi
 }
 
 while [ "$#" -gt 0 ]; do
-	case "$1" in
-		0|90|180|270)
-			rotation=$1
-			;;
-		--rotation)
-			require_value "$@"
-			rotation=$2
-			shift
-			;;
-		--sensor-width)
-			require_value "$@"
-			sensor_width=$2
-			shift
-			;;
-		--sensor-height)
-			require_value "$@"
-			sensor_height=$2
-			shift
-			;;
-		--lcd-width)
-			require_value "$@"
-			lcd_width=$2
-			shift
-			;;
-		--lcd-height)
-			require_value "$@"
-			lcd_height=$2
-			shift
-			;;
-		--iq-dir)
-			require_value "$@"
-			iq_dir=$2
-			shift
-			;;
-		--isp)
-			require_value "$@"
-			isp_index=$2
-			shift
-			;;
-		--vo-layer)
-			require_value "$@"
-			vo_layer=$2
-			shift
-			;;
-		--vo-device)
-			require_value "$@"
-			vo_device=$2
-			shift
-			;;
-		--output)
-			require_value "$@"
-			output=$2
-			shift
-			;;
-		--encoded-frames|-n)
-			require_value "$@"
-			encoded_frames=$2
-			shift
-			;;
-		--no-vo)
-			no_vo=1
-			;;
-		--preview-shm)
-			require_value "$@"
-			preview_shm=$2
-			shift
-			;;
-		--preview-width)
-			require_value "$@"
-			preview_width=$2
-			shift
-			;;
-		--preview-height)
-			require_value "$@"
-			preview_height=$2
-			shift
-			;;
-		--preview-fps)
-			require_value "$@"
-			preview_fps=$2
-			shift
-			;;
-		--restore)
-			restore_default=1
-			;;
-		--help|-h)
-			usage
-			exit 0
-			;;
-		*)
-			echo "Unknown option: $1" >&2
-			usage >&2
-			exit 1
-			;;
-	esac
-	shift
+    case "$1" in
+        0|90|180|270)
+            rotation=$1
+            ;;
+        --rotation)
+            require_value "$@"
+            rotation=$2
+            shift
+            ;;
+        --sensor-width)
+            require_value "$@"
+            sensor_width=$2
+            shift
+            ;;
+        --sensor-height)
+            require_value "$@"
+            sensor_height=$2
+            shift
+            ;;
+        --lcd-width)
+            require_value "$@"
+            lcd_width=$2
+            shift
+            ;;
+        --lcd-height)
+            require_value "$@"
+            lcd_height=$2
+            shift
+            ;;
+        --iq-dir)
+            require_value "$@"
+            iq_dir=$2
+            shift
+            ;;
+        --isp)
+            require_value "$@"
+            isp_index=$2
+            shift
+            ;;
+        --vo-layer)
+            require_value "$@"
+            vo_layer=$2
+            shift
+            ;;
+        --vo-device)
+            require_value "$@"
+            vo_device=$2
+            shift
+            ;;
+        --output)
+            require_value "$@"
+            output=$2
+            shift
+            ;;
+        --encoded-frames|-n)
+            require_value "$@"
+            encoded_frames=$2
+            shift
+            ;;
+        --no-vo)
+            no_vo=1
+            ;;
+        --preview-shm)
+            require_value "$@"
+            preview_shm=$2
+            shift
+            ;;
+        --preview-width)
+            require_value "$@"
+            preview_width=$2
+            shift
+            ;;
+        --preview-height)
+            require_value "$@"
+            preview_height=$2
+            shift
+            ;;
+        --preview-fps)
+            require_value "$@"
+            preview_fps=$2
+            shift
+            ;;
+        --restore)
+            restore_default=1
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+    shift
 done
 
 case "$rotation" in
-	0|90|180|270) ;;
-	*)
-		echo "Invalid rotation: $rotation" >&2
-		usage >&2
-		exit 1
-		;;
+    0|90|180|270) ;;
+    *)
+        echo "Invalid rotation: $rotation" >&2
+        usage >&2
+        exit 1
+        ;;
 esac
 
 restore_rkipc() {
-	if pidof rkipc >/dev/null 2>&1; then
-		return
-	fi
+    if pidof rkipc >/dev/null 2>&1; then
+        return
+    fi
 
-	# 等待 ISP 和显示资源完成异步释放，避免默认媒体服务抢占资源。
-	sleep 2
-	setsid sh -c 'LD_LIBRARY_PATH=/oem/usr/lib exec /oem/usr/bin/rkipc >/tmp/rkipc.log 2>&1' \
-		</dev/null >/dev/null 2>&1 &
-	count=0
-	while ! pidof rkipc >/dev/null 2>&1 && [ "$count" -lt 12 ]; do
-		count=$((count + 1))
-		sleep 1
-	done
-	if ! pidof rkipc >/dev/null 2>&1; then
-		echo "Failed to restore rkipc; check /tmp/rkipc.log" >&2
-	fi
+    # 等待 ISP 和显示资源完成异步释放，避免默认媒体服务抢占资源。
+    sleep 2
+    setsid sh -c 'LD_LIBRARY_PATH=/oem/usr/lib exec /oem/usr/bin/rkipc >/tmp/rkipc.log 2>&1' \
+        </dev/null >/dev/null 2>&1 &
+    count=0
+    while ! pidof rkipc >/dev/null 2>&1 && [ "$count" -lt 12 ]; do
+        count=$((count + 1))
+        sleep 1
+    done
+    if ! pidof rkipc >/dev/null 2>&1; then
+        echo "Failed to restore rkipc; check /tmp/rkipc.log" >&2
+    fi
 }
 
 stop_rkipc() {
-	killall rkipc >/dev/null 2>&1
+    killall rkipc >/dev/null 2>&1
 
-	count=0
-	while pidof rkipc >/dev/null 2>&1 && [ "$count" -lt 15 ]; do
-		count=$((count + 1))
-		sleep 1
-	done
-	if pidof rkipc >/dev/null 2>&1; then
-		echo "rkipc did not stop after 15s; forcing the hung legacy service down" >&2
-		killall -KILL rkipc >/dev/null 2>&1
-		count=0
-		while pidof rkipc >/dev/null 2>&1 && [ "$count" -lt 5 ]; do
-			count=$((count + 1))
-			sleep 1
-		done
-		if pidof rkipc >/dev/null 2>&1; then
-			echo "Failed to stop rkipc after SIGKILL" >&2
-			return 1
-		fi
-	fi
+    count=0
+    while pidof rkipc >/dev/null 2>&1 && [ "$count" -lt 15 ]; do
+        count=$((count + 1))
+        sleep 1
+    done
+    if pidof rkipc >/dev/null 2>&1; then
+        echo "rkipc did not stop after 15s; forcing the hung legacy service down" >&2
+        killall -KILL rkipc >/dev/null 2>&1
+        count=0
+        while pidof rkipc >/dev/null 2>&1 && [ "$count" -lt 5 ]; do
+            count=$((count + 1))
+            sleep 1
+        done
+        if pidof rkipc >/dev/null 2>&1; then
+            echo "Failed to stop rkipc after SIGKILL" >&2
+            return 1
+        fi
+    fi
 
-	# rkipc may spawn an eth0 DHCP client after opening media resources.  Its
-	# inherited RTSP socket and DMA-BUF descriptors survive after rkipc exits,
-	# so stop only that legacy eth0 client before starting our media pipeline.
-	eth0_udhcpc_pids=""
-	for pid in $(pidof udhcpc 2>/dev/null); do
-		[ -r "/proc/$pid/cmdline" ] || continue
-		cmdline=$(tr '\000' ' ' <"/proc/$pid/cmdline" 2>/dev/null)
-		case " $cmdline " in
-			*" -i eth0 "*)
-				kill -TERM "$pid" 2>/dev/null
-				eth0_udhcpc_pids="$eth0_udhcpc_pids $pid"
-				;;
-		esac
-	done
+    # rkipc may spawn an eth0 DHCP client after opening media resources.  Its
+    # inherited RTSP socket and DMA-BUF descriptors survive after rkipc exits,
+    # so stop only that legacy eth0 client before starting our media pipeline.
+    eth0_udhcpc_pids=""
+    for pid in $(pidof udhcpc 2>/dev/null); do
+        [ -r "/proc/$pid/cmdline" ] || continue
+        cmdline=$(tr '\000' ' ' <"/proc/$pid/cmdline" 2>/dev/null)
+        case " $cmdline " in
+            *" -i eth0 "*)
+                kill -TERM "$pid" 2>/dev/null
+                eth0_udhcpc_pids="$eth0_udhcpc_pids $pid"
+                ;;
+        esac
+    done
 
-	for pid in $eth0_udhcpc_pids; do
-		count=0
-		while kill -0 "$pid" 2>/dev/null && [ "$count" -lt 5 ]; do
-			count=$((count + 1))
-			sleep 1
-		done
-		kill -KILL "$pid" 2>/dev/null
-	done
+    for pid in $eth0_udhcpc_pids; do
+        count=0
+        while kill -0 "$pid" 2>/dev/null && [ "$count" -lt 5 ]; do
+            count=$((count + 1))
+            sleep 1
+        done
+        kill -KILL "$pid" 2>/dev/null
+    done
 
-	if command -v fuser >/dev/null 2>&1; then
-		count=0
-		while fuser 554/tcp >/dev/null 2>&1 && [ "$count" -lt 5 ]; do
-			count=$((count + 1))
-			sleep 1
-		done
-		if fuser 554/tcp >/dev/null 2>&1; then
-			echo "Failed to release RTSP port 554" >&2
-			return 1
-		fi
-	fi
-	sleep 2
+    if command -v fuser >/dev/null 2>&1; then
+        count=0
+        while fuser 554/tcp >/dev/null 2>&1 && [ "$count" -lt 5 ]; do
+            count=$((count + 1))
+            sleep 1
+        done
+        if fuser 554/tcp >/dev/null 2>&1; then
+            echo "Failed to release RTSP port 554" >&2
+            return 1
+        fi
+    fi
+    sleep 2
 }
 
 unblank_backlight() {
-	backlight_power=/sys/class/backlight/backlight/bl_power
-	if [ -w "$backlight_power" ]; then
-		echo 0 > "$backlight_power"
-	fi
+    backlight_power=/sys/class/backlight/backlight/bl_power
+    if [ -w "$backlight_power" ]; then
+        echo 0 > "$backlight_power"
+    fi
 }
 
 cleanup() {
-	if [ "$restore_default" -eq 1 ]; then
-		restore_rkipc
-	fi
+    if [ "$restore_default" -eq 1 ]; then
+        restore_rkipc
+    fi
 }
 
 on_signal() {
-	if [ -n "$app_pid" ]; then
-		kill -INT "$app_pid" 2>/dev/null
-		wait "$app_pid"
-	fi
-	cleanup
-	exit 130
+    if [ -n "$app_pid" ]; then
+        kill -INT "$app_pid" 2>/dev/null
+        wait "$app_pid"
+    fi
+    cleanup
+    exit 130
 }
 
 if [ ! -x "$APP" ]; then
-	echo "Missing executable: $APP" >&2
-	exit 1
+    echo "Missing executable: $APP" >&2
+    exit 1
 fi
 
 if [ -n "$preview_shm" ] && [ "$no_vo" -ne 1 ]; then
-	echo "--preview-shm requires --no-vo" >&2
-	exit 1
+    echo "--preview-shm requires --no-vo" >&2
+    exit 1
 fi
 
 trap on_signal INT TERM
@@ -282,22 +282,22 @@ unblank_backlight
 
 export LD_LIBRARY_PATH=/oem/usr/lib
 set -- -a "$iq_dir" \
-	-w "$sensor_width" -h "$sensor_height" -W "$lcd_width" -H "$lcd_height" \
-	-r "$rotation" -I "$isp_index" -l "$vo_layer" -d "$vo_device" \
-	-o "$output"
+    -w "$sensor_width" -h "$sensor_height" -W "$lcd_width" -H "$lcd_height" \
+    -r "$rotation" -I "$isp_index" -l "$vo_layer" -d "$vo_device" \
+    -o "$output"
 if [ "$no_vo" -eq 1 ]; then
-	set -- "$@" --no-vo
+    set -- "$@" --no-vo
 fi
 if [ -n "$preview_shm" ]; then
-	set -- "$@" --preview-shm "$preview_shm" --preview-width "$preview_width" \
-		--preview-height "$preview_height" --preview-fps "$preview_fps"
+    set -- "$@" --preview-shm "$preview_shm" --preview-width "$preview_width" \
+        --preview-height "$preview_height" --preview-fps "$preview_fps"
 fi
 if [ -n "$encoded_frames" ]; then
-	set -- "$@" -n "$encoded_frames"
+    set -- "$@" -n "$encoded_frames"
 fi
 if [ "$restore_default" -eq 0 ]; then
-	# 默认模式不需要在退出后恢复 rkipc，直接替换脚本进程，避免 Ctrl+C 被脚本重复转发。
-	exec "$APP" "$@"
+    # 默认模式不需要在退出后恢复 rkipc，直接替换脚本进程，避免 Ctrl+C 被脚本重复转发。
+    exec "$APP" "$@"
 fi
 
 "$APP" "$@" &

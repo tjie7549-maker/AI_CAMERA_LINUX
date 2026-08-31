@@ -50,13 +50,15 @@ class ProtocolTests(unittest.TestCase):
     def test_versioned_and_legacy_protocol(self):
         current = normalize_detection(message(1000, [track(1)]), now_ms=1000)
         self.assertEqual(current["tracks"][0]["track_id"], 1)
-        legacy = normalize_detection({"type": "npu", "peopleCount": 2,
-                                      "timestamp": 1000}, now_ms=1000)
+        legacy = normalize_detection(
+            {"type": "npu", "peopleCount": 2, "timestamp": 1000}, now_ms=1000
+        )
         self.assertTrue(legacy["legacy"])
         self.assertEqual(legacy["people_count"], 2)
         self.assertEqual(legacy["tracks"], [])
-        self.assertIsNone(normalize_detection({"schema_version": 99,
-                                               "message_type": "track.update"}))
+        self.assertIsNone(
+            normalize_detection({"schema_version": 99, "message_type": "track.update"})
+        )
         unsafe = message(1000, [track(1)])
         unsafe["camera_id"] = "../../camera"
         self.assertIsNone(normalize_detection(unsafe, now_ms=1000))
@@ -65,12 +67,23 @@ class ProtocolTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             raw = message(1000, [track(7)], frame_id=99)
-            raw.update({"type": "npu", "peopleCount": 1,
-                        "sentinelActive": True, "displayAwake": True,
-                        "latencyMs": 18.5})
+            raw.update(
+                {
+                    "type": "npu",
+                    "peopleCount": 1,
+                    "sentinelActive": True,
+                    "displayAwake": True,
+                    "latencyMs": 18.5,
+                }
+            )
             self.assertEqual(parse_line(json.dumps(raw).encode())["frame_id"], 99)
-            server = NpuResultServer("127.0.0.1", 0, root / "npu_latest.json",
-                                     root / "npu_display.json", root / "events.log")
+            server = NpuResultServer(
+                "127.0.0.1",
+                0,
+                root / "npu_latest.json",
+                root / "npu_display.json",
+                root / "events.log",
+            )
             server.handle(raw)
             latest = json.loads((root / "npu_latest.json").read_text())
             display = json.loads((root / "npu_display.json").read_text())
@@ -83,10 +96,13 @@ class ProtocolTests(unittest.TestCase):
 
 class EventEngineTests(unittest.TestCase):
     def setUp(self):
-        self.engine = EventEngine(end_grace_seconds=2, stale_seconds=100,
-                                  initial_delay_seconds=3,
-                                  cooldown_seconds=120,
-                                  long_refresh_seconds=300)
+        self.engine = EventEngine(
+            end_grace_seconds=2,
+            stale_seconds=100,
+            initial_delay_seconds=3,
+            cooldown_seconds=120,
+            long_refresh_seconds=300,
+        )
 
     def test_scenario_a_single_event_survives_miss_and_grace(self):
         out = self.engine.ingest(message(1000, [track(1)]), now_ms=1000)
@@ -156,10 +172,10 @@ class EventEngineTests(unittest.TestCase):
 
 class FrameAndStoreTests(unittest.TestCase):
     def test_frame_score_prefers_clear_exposed_confident_image(self):
-        good = FrameCandidate(Path("good"), 1, 1, 0.95, 0.18,
-                              brightness=128, variance=100, difference=0.5)
-        bad = FrameCandidate(Path("bad"), 1, 2, 0.5, 0.01,
-                             brightness=2, variance=1, difference=0.0)
+        good = FrameCandidate(
+            Path("good"), 1, 1, 0.95, 0.18, brightness=128, variance=100, difference=0.5
+        )
+        bad = FrameCandidate(Path("bad"), 1, 2, 0.5, 0.01, brightness=2, variance=1, difference=0.0)
         self.assertGreater(good.score, bad.score)
 
     def test_nearest_frame_and_promotion(self):
@@ -168,10 +184,16 @@ class FrameAndStoreTests(unittest.TestCase):
             ring = root / "ring"
             ring.mkdir()
             (ring / "frame_1100_9.jpg").write_bytes(b"jpeg")
-            (ring / "frame_1100_9.json").write_text(json.dumps({
-                "receiver_frame_id": 9, "brightness": 120,
-                "variance": 80, "difference": 0.2,
-            }))
+            (ring / "frame_1100_9.json").write_text(
+                json.dumps(
+                    {
+                        "receiver_frame_id": 9,
+                        "brightness": 120,
+                        "variance": 80,
+                        "difference": 0.2,
+                    }
+                )
+            )
             cache = FrameCache(root / "event_frames", root / "latest.jpg", ring)
             candidate = cache.capture("evt_test_1000_a", 77, 1000, 0.9, 0.2)
             self.assertEqual(candidate.frame_id, 77)
@@ -186,19 +208,36 @@ class FrameAndStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "events.db"
             store = EventStore(path)
-            record = {"event_id": "evt_test_1000_abc", "camera_id": "test",
-                      "state": "active", "started_at": 1000, "ended_at": None,
-                      "duration_ms": 0, "max_people": 1, "warning": False,
-                      "warning_reason": "", "summary": "", "best_image_path": None,
-                      "best_frame_id": 0, "frame_match": "approximate"}
+            record = {
+                "event_id": "evt_test_1000_abc",
+                "camera_id": "test",
+                "state": "active",
+                "started_at": 1000,
+                "ended_at": None,
+                "duration_ms": 0,
+                "max_people": 1,
+                "warning": False,
+                "warning_reason": "",
+                "summary": "",
+                "best_image_path": None,
+                "best_frame_id": 0,
+                "frame_match": "approximate",
+            }
             store.upsert_event(record)
             store.upsert_event(record)
             store.upsert_track(record["event_id"], track(1), 1100)
             store.upsert_track(record["event_id"], track(1, confidence=0.95), 1200)
-            recognition = {"request_id": "req-1", "event_id": record["event_id"],
-                           "source": "cloud", "frame_id": 1,
-                           "recognition_backend": "cloud", "success": True,
-                           "server_latency_ms": 100, "usage": {}, "result": {}}
+            recognition = {
+                "request_id": "req-1",
+                "event_id": record["event_id"],
+                "source": "cloud",
+                "frame_id": 1,
+                "recognition_backend": "cloud",
+                "success": True,
+                "server_latency_ms": 100,
+                "usage": {},
+                "result": {},
+            }
             store.record_recognition(recognition)
             store.record_recognition(recognition)
             event = store.get_event(record["event_id"])
@@ -207,8 +246,7 @@ class FrameAndStoreTests(unittest.TestCase):
             store.close()
             reopened = EventStore(path)
             reopened.close_open_events()
-            self.assertEqual(reopened.get_event(record["event_id"])["state"],
-                             "interrupted")
+            self.assertEqual(reopened.get_event(record["event_id"])["state"], "interrupted")
             reopened.close()
 
 

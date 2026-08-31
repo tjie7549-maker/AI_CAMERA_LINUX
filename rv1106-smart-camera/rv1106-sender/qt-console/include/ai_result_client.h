@@ -11,29 +11,27 @@
 class AiResultClient : public QObject {
     Q_OBJECT
 
-public:
-    explicit AiResultClient(const QString &serverIp, quint16 serverPort,
-                            QObject *parent = nullptr);
+   public:
+    explicit AiResultClient(const QString &serverIp, quint16 serverPort, QObject *parent = nullptr);
 
     void start();
     void stop();
 
-    static bool parseMessage(const QByteArray &message, AiResult &result,
-                             QString &error);
+    static bool parseMessage(const QByteArray &message, AiResult &result, QString &error);
 
-signals:
+   signals:
     void resultReceived(const AiResult &result);
     void connectionStateChanged(const QString &state);
     void errorOccurred(const QString &message);
 
-private slots:
+   private slots:
     void connectToServer();
     void onConnected();
     void onDisconnected();
     void onReadyRead();
     void onSocketError(QAbstractSocket::SocketError error);
 
-private:
+   private:
     void scheduleReconnect();
     void setConnectionState(const QString &state);
 

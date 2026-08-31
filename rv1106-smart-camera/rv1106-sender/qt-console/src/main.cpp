@@ -1,3 +1,6 @@
+#include <fcntl.h>
+#include <unistd.h>
+
 #include <QApplication>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
@@ -7,27 +10,25 @@
 #include <QScreen>
 #include <QSocketNotifier>
 #include <QTimer>
-
 #include <cerrno>
 #include <csignal>
 #include <cstdio>
-#include <fcntl.h>
-#include <unistd.h>
 
 #include "ai_result.h"
+
+// Qt 终端入口：解析网络、预览和 daemon 参数，创建各客户端并连接 UI 信号槽。
 #include "ai_result_client.h"
+#include "daemon_client.h"
 #include "main_window.h"
 #include "manual_recognition_client.h"
-#include "result_storage_client.h"
 #include "preview_shm_reader.h"
+#include "result_storage_client.h"
 #include "status_controller.h"
-#include "daemon_client.h"
 
 namespace {
 int signalPipe[2] = {-1, -1};
 
-void handleSignal(int signalNumber)
-{
+void handleSignal(int signalNumber) {
     const unsigned char value = static_cast<unsigned char>(signalNumber);
     const int savedErrno = errno;
     if (signalPipe[1] >= 0)
@@ -35,8 +36,7 @@ void handleSignal(int signalNumber)
     errno = savedErrno;
 }
 
-bool installSignalHandlers()
-{
+bool installSignalHandlers() {
     sigset_t signalSet;
     sigemptyset(&signalSet);
     sigaddset(&signalSet, SIGINT);
@@ -55,13 +55,11 @@ bool installSignalHandlers()
     action.sa_handler = handleSignal;
     sigemptyset(&action.sa_mask);
     action.sa_flags = SA_RESTART;
-    return sigaction(SIGINT, &action, nullptr) == 0 &&
-           sigaction(SIGTERM, &action, nullptr) == 0;
+    return sigaction(SIGINT, &action, nullptr) == 0 && sigaction(SIGTERM, &action, nullptr) == 0;
 }
-} // namespace
+}  // namespace
 
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
     if (!installSignalHandlers()) {
         std::fprintf(stderr, "Failed to install signal handlers.\n");
         return 1;
@@ -73,53 +71,45 @@ int main(int argc, char *argv[])
     qRegisterMetaType<AiResult>("AiResult");
 
     const QString cjkFontPath =
-        QCoreApplication::applicationDirPath() +
-        QStringLiteral("/fonts/DroidSansFallbackFull.ttf");
+        QCoreApplication::applicationDirPath() + QStringLiteral("/fonts/DroidSansFallbackFull.ttf");
     const int cjkFontId = QFontDatabase::addApplicationFont(cjkFontPath);
     if (cjkFontId < 0) {
-        qWarning("Failed to load CJK font: %s",
-                 cjkFontPath.toLocal8Bit().constData());
+        qWarning("Failed to load CJK font: %s", cjkFontPath.toLocal8Bit().constData());
     } else {
-        qInfo("#Font loaded: %s",
-              QFontDatabase::applicationFontFamilies(cjkFontId)
-                  .join(QStringLiteral(", "))
-                  .toLocal8Bit()
-                  .constData());
+        qInfo("#Font loaded: %s", QFontDatabase::applicationFontFamilies(cjkFontId)
+                                      .join(QStringLiteral(", "))
+                                      .toLocal8Bit()
+                                      .constData());
     }
 
     QCommandLineParser parser;
-    parser.setApplicationDescription(
-        QStringLiteral("RV1106 720x720 AI vision terminal"));
+    parser.setApplicationDescription(QStringLiteral("RV1106 720x720 AI vision terminal"));
     parser.addHelpOption();
     parser.addVersionOption();
-    QCommandLineOption serverIpOption(
-        QStringList() << QStringLiteral("server-ip"),
-        QStringLiteral("ROCK 2A TCP server IPv4 address"),
-        QStringLiteral("address"), QStringLiteral("192.168.50.1"));
-    QCommandLineOption serverPortOption(
-        QStringList() << QStringLiteral("server-port"),
-        QStringLiteral("ROCK 2A TCP server port"),
-        QStringLiteral("port"), QStringLiteral("9000"));
-    QCommandLineOption previewShmOption(
-        QStringList() << QStringLiteral("preview-shm"),
-        QStringLiteral("POSIX shared-memory preview name"),
-        QStringLiteral("name"), QStringLiteral("/ai_cam_preview"));
-    QCommandLineOption previewTimeoutOption(
-        QStringList() << QStringLiteral("preview-timeout-ms"),
-        QStringLiteral("Preview stale timeout in milliseconds"),
-        QStringLiteral("milliseconds"), QStringLiteral("1000"));
-    QCommandLineOption recognizeUrlOption(
-        QStringList() << QStringLiteral("recognize-url"),
-        QStringLiteral("ROCK 2A manual-recognition HTTP URL"),
-        QStringLiteral("url"), QStringLiteral("http://192.168.50.1:9001/recognize"));
+    QCommandLineOption serverIpOption(QStringList() << QStringLiteral("server-ip"),
+                                      QStringLiteral("ROCK 2A TCP server IPv4 address"),
+                                      QStringLiteral("address"), QStringLiteral("192.168.50.1"));
+    QCommandLineOption serverPortOption(QStringList() << QStringLiteral("server-port"),
+                                        QStringLiteral("ROCK 2A TCP server port"),
+                                        QStringLiteral("port"), QStringLiteral("9000"));
+    QCommandLineOption previewShmOption(QStringList() << QStringLiteral("preview-shm"),
+                                        QStringLiteral("POSIX shared-memory preview name"),
+                                        QStringLiteral("name"), QStringLiteral("/ai_cam_preview"));
+    QCommandLineOption previewTimeoutOption(QStringList() << QStringLiteral("preview-timeout-ms"),
+                                            QStringLiteral("Preview stale timeout in milliseconds"),
+                                            QStringLiteral("milliseconds"), QStringLiteral("1000"));
+    QCommandLineOption recognizeUrlOption(QStringList() << QStringLiteral("recognize-url"),
+                                          QStringLiteral("ROCK 2A manual-recognition HTTP URL"),
+                                          QStringLiteral("url"),
+                                          QStringLiteral("http://192.168.50.1:9001/recognize"));
     QCommandLineOption autoRecognitionIntervalOption(
         QStringList() << QStringLiteral("auto-recognition-interval-ms"),
         QStringLiteral("Automatic cloud-recognition interval while live"),
         QStringLiteral("milliseconds"), QStringLiteral("30000"));
-    QCommandLineOption eventApiUrlOption(
-        QStringList() << QStringLiteral("event-api-url"),
-        QStringLiteral("ROCK 2A event HTTP base URL"),
-        QStringLiteral("url"), QStringLiteral("http://192.168.50.1:9011"));
+    QCommandLineOption eventApiUrlOption(QStringList() << QStringLiteral("event-api-url"),
+                                         QStringLiteral("ROCK 2A event HTTP base URL"),
+                                         QStringLiteral("url"),
+                                         QStringLiteral("http://192.168.50.1:9011"));
     QCommandLineOption legacyAutoRecognitionOption(
         QStringList() << QStringLiteral("enable-legacy-auto-recognition"),
         QStringLiteral("Enable the legacy fixed-interval recognition timer"));
@@ -142,8 +132,7 @@ int main(int argc, char *argv[])
     QHostAddress serverAddress;
     if (!serverAddress.setAddress(serverIp) ||
         serverAddress.protocol() != QAbstractSocket::IPv4Protocol) {
-        std::fprintf(stderr, "Invalid --server-ip: %s\n",
-                     serverIp.toLocal8Bit().constData());
+        std::fprintf(stderr, "Invalid --server-ip: %s\n", serverIp.toLocal8Bit().constData());
         return 2;
     }
 
@@ -191,8 +180,8 @@ int main(int argc, char *argv[])
 
     const QSize screenSize = app.primaryScreen()->size();
     if (screenSize != QSize(720, 720)) {
-        std::fprintf(stderr, "Warning: expected 720x720 screen, got %dx%d.\n",
-                     screenSize.width(), screenSize.height());
+        std::fprintf(stderr, "Warning: expected 720x720 screen, got %dx%d.\n", screenSize.width(),
+                     screenSize.height());
     }
 
     ManualRecognitionClient manualRecognitionClient;
@@ -203,55 +192,51 @@ int main(int argc, char *argv[])
     storageClient.setUrl(saveUrl);
     storageClient.setEventApiBase(eventApiUrl);
     DaemonClient daemonClient(parser.value(daemonSocketOption));
-    MainWindow window(&manualRecognitionClient, &storageClient,
-                      autoRecognitionIntervalMs,
+    MainWindow window(&manualRecognitionClient, &storageClient, autoRecognitionIntervalMs,
                       parser.isSet(legacyAutoRecognitionOption), &daemonClient);
     StatusController statusController;
     AiResultClient client(serverIp, static_cast<quint16>(portValue));
     PreviewShmReader previewReader(previewShm, previewTimeoutMs);
 
-    QObject::connect(&client, &AiResultClient::resultReceived,
-                     &window, &MainWindow::updateAiResult);
-    QObject::connect(&client, &AiResultClient::resultReceived,
-                     &statusController, [&statusController](const AiResult &) {
-                         statusController.markAiResultReceived();
-                     });
-    QObject::connect(&client, &AiResultClient::connectionStateChanged,
-                     &window, &MainWindow::updateConnectionState);
-    QObject::connect(&client, &AiResultClient::errorOccurred,
-                     &window, &MainWindow::updateError);
-    QObject::connect(&statusController, &StatusController::aiStateChanged,
-                     &window, &MainWindow::updateAiState);
-    QObject::connect(&previewReader, &PreviewShmReader::frameReady,
-                     &window, &MainWindow::updatePreviewFrame);
-    QObject::connect(&previewReader, &PreviewShmReader::stateChanged,
-                     &window, &MainWindow::updatePreviewState);
-    QObject::connect(&previewReader, &PreviewShmReader::statsChanged,
-                     &window, &MainWindow::updatePreviewStats);
-    QObject::connect(&manualRecognitionClient, &ManualRecognitionClient::requestStarted,
-                     &window, &MainWindow::onRecognitionRequestStarted);
-    QObject::connect(&manualRecognitionClient, &ManualRecognitionClient::requestSucceeded,
-                     &window, &MainWindow::onRecognitionRequestSucceeded);
-    QObject::connect(&manualRecognitionClient, &ManualRecognitionClient::requestFailed,
-                     &window, &MainWindow::onRecognitionRequestFailed);
-    QObject::connect(&storageClient,&ResultStorageClient::succeeded,&window,&MainWindow::onSaveSucceeded);
-    QObject::connect(&storageClient,&ResultStorageClient::failed,&window,&MainWindow::onSaveFailed);
-    QObject::connect(&window,&MainWindow::userExitRequested,&app,[&app](){ app.exit(42); });
-    QObject::connect(&app, &QCoreApplication::aboutToQuit,
-                     &client, &AiResultClient::stop);
-    QObject::connect(&app, &QCoreApplication::aboutToQuit,
-                     &previewReader, &PreviewShmReader::stop);
-    QObject::connect(&app, &QCoreApplication::aboutToQuit,
-                     &manualRecognitionClient, &ManualRecognitionClient::abort);
+    QObject::connect(&client, &AiResultClient::resultReceived, &window,
+                     &MainWindow::updateAiResult);
+    QObject::connect(
+        &client, &AiResultClient::resultReceived, &statusController,
+        [&statusController](const AiResult &) { statusController.markAiResultReceived(); });
+    QObject::connect(&client, &AiResultClient::connectionStateChanged, &window,
+                     &MainWindow::updateConnectionState);
+    QObject::connect(&client, &AiResultClient::errorOccurred, &window, &MainWindow::updateError);
+    QObject::connect(&statusController, &StatusController::aiStateChanged, &window,
+                     &MainWindow::updateAiState);
+    QObject::connect(&previewReader, &PreviewShmReader::frameReady, &window,
+                     &MainWindow::updatePreviewFrame);
+    QObject::connect(&previewReader, &PreviewShmReader::stateChanged, &window,
+                     &MainWindow::updatePreviewState);
+    QObject::connect(&previewReader, &PreviewShmReader::statsChanged, &window,
+                     &MainWindow::updatePreviewStats);
+    QObject::connect(&manualRecognitionClient, &ManualRecognitionClient::requestStarted, &window,
+                     &MainWindow::onRecognitionRequestStarted);
+    QObject::connect(&manualRecognitionClient, &ManualRecognitionClient::requestSucceeded, &window,
+                     &MainWindow::onRecognitionRequestSucceeded);
+    QObject::connect(&manualRecognitionClient, &ManualRecognitionClient::requestFailed, &window,
+                     &MainWindow::onRecognitionRequestFailed);
+    QObject::connect(&storageClient, &ResultStorageClient::succeeded, &window,
+                     &MainWindow::onSaveSucceeded);
+    QObject::connect(&storageClient, &ResultStorageClient::failed, &window,
+                     &MainWindow::onSaveFailed);
+    QObject::connect(&window, &MainWindow::userExitRequested, &app, [&app]() { app.exit(42); });
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, &client, &AiResultClient::stop);
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, &previewReader, &PreviewShmReader::stop);
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, &manualRecognitionClient,
+                     &ManualRecognitionClient::abort);
 
     QSocketNotifier signalNotifier(signalPipe[0], QSocketNotifier::Read, &app);
-    QObject::connect(&signalNotifier, &QSocketNotifier::activated,
-                     [&app](int fd) {
-                         unsigned char values[16];
-                         while (read(fd, values, sizeof(values)) > 0) {
-                         }
-                         app.quit();
-                     });
+    QObject::connect(&signalNotifier, &QSocketNotifier::activated, [&app](int fd) {
+        unsigned char values[16];
+        while (read(fd, values, sizeof(values)) > 0) {
+        }
+        app.quit();
+    });
 
     QApplication::setOverrideCursor(Qt::BlankCursor);
     window.showFullScreen();

@@ -19,7 +19,7 @@ struct SwsContext;
 }
 
 class RtspReceiver {
-public:
+   public:
     struct Config {
         std::string url = "rtsp://192.168.50.2:554/live/1";
         std::string output_dir = "./frames";
@@ -44,7 +44,7 @@ public:
     void requestStop();
     void close();
 
-private:
+   private:
     bool openInput();
     bool openDecoder();
     bool prepareConverter(const AVFrame* frame);
@@ -54,8 +54,7 @@ private:
     bool saveSnapshot(const AVFrame* rgb_frame);
     bool updateLatestImage(const AVFrame* rgb_frame);
     bool saveFrameCache(const AVFrame* rgb_frame);
-    bool encodeAndWriteJpeg(const AVFrame* rgb_frame,
-                            const std::string& image_path,
+    bool encodeAndWriteJpeg(const AVFrame* rgb_frame, const std::string& image_path,
                             bool atomic_replace);
     bool prepareJpegEncoder(int width, int height);
     void closeJpegEncoder();

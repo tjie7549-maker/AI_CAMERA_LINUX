@@ -2,30 +2,24 @@
 
 #include <QDebug>
 
-StatusController::StatusController(QObject *parent)
-    : QObject(parent)
-{
+StatusController::StatusController(QObject *parent) : QObject(parent) {
     checkTimer_.setInterval(1000);
-    connect(&checkTimer_, &QTimer::timeout,
-            this, &StatusController::updateAiState);
+    connect(&checkTimer_, &QTimer::timeout, this, &StatusController::updateAiState);
     checkTimer_.start();
     publishState(QStringLiteral("AI OFFLINE"));
 }
 
-void StatusController::markAiResultReceived()
-{
+void StatusController::markAiResultReceived() {
     lastResultTimer_.restart();
     publishState(QStringLiteral("AI ONLINE"));
 }
 
-void StatusController::resetAiState()
-{
+void StatusController::resetAiState() {
     lastResultTimer_.invalidate();
     publishState(QStringLiteral("AI OFFLINE"));
 }
 
-void StatusController::updateAiState()
-{
+void StatusController::updateAiState() {
     if (!lastResultTimer_.isValid()) {
         publishState(QStringLiteral("AI OFFLINE"));
         return;
@@ -40,8 +34,7 @@ void StatusController::updateAiState()
         publishState(QStringLiteral("AI OFFLINE"));
 }
 
-void StatusController::publishState(const QString &state)
-{
+void StatusController::publishState(const QString &state) {
     if (currentState_ == state)
         return;
     currentState_ = state;

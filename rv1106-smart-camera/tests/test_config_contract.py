@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
 """无需板卡的运行配置契约检查。"""
+
 import json
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 config = json.loads((root / "configs" / "config.json").read_text(encoding="utf-8"))
 required_strings = [
-    "socket_path", "log_path", "sensor_subdev", "sender_path", "npu_path",
-    "iq_dir", "isp_control_socket", "rkipc_path", "rkipc_socket",
+    "socket_path",
+    "log_path",
+    "sensor_subdev",
+    "sender_path",
+    "npu_path",
+    "iq_dir",
+    "isp_control_socket",
+    "rkipc_path",
+    "rkipc_socket",
 ]
 required_booleans = ["start_pipeline", "start_npu", "auto_ae"]
 

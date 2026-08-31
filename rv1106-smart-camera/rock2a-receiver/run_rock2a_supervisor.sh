@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -u
 
+# ROCK 2A 部署目录与运行期目录；运行期 JSON、SQLite 和日志不写回源码树。
 PROJECT_DIR=/home/radxa/AI_CAMERA_LINUX/rock2a_receiver
 RUNTIME_DIR=$PROJECT_DIR/runtime/ai_cam
 LOG_DIR=$PROJECT_DIR/runtime/logs
@@ -16,6 +17,7 @@ if [ -r "$CONFIG_FILE" ]; then
     set +a
 fi
 
+# RV1106 私有链路地址：RTSP 由 receiver 拉取，SSH 仅用于感知用户退出。
 RV_HOST=${AI_CAMERA_RV_HOST:-rv1106-ai-camera}
 RV_IP=${AI_CAMERA_RV_IP:-192.168.50.2}
 RV_PORT=${AI_CAMERA_RTSP_PORT:-554}
@@ -31,6 +33,7 @@ AUTO_SAVE_POLICY=${AI_CAMERA_AUTO_SAVE_POLICY:-warning}
 AUTO_SAVE_DEDUP_SECONDS=${AI_CAMERA_AUTO_SAVE_DEDUP_SECONDS:-60}
 MIN_FREE_MB=${AI_CAMERA_MIN_FREE_MB:-1024}
 AI_BACKEND=${AI_BACKEND:-cloud}
+# NPU 原始状态、Qt 兼容显示状态及各服务监听端口。
 NPU_RESULT_PATH=${NPU_RESULT_PATH:-$RUNTIME_DIR/npu_latest.json}
 NPU_DISPLAY_PATH=${NPU_DISPLAY_PATH:-$RUNTIME_DIR/npu_display.json}
 NPU_SERVER_PORT=${NPU_SERVER_PORT:-9010}
@@ -39,6 +42,7 @@ BIND_ADDRESS=${AI_CAMERA_BIND_ADDRESS:-192.168.50.1}
 EVENT_PORT=${AI_CAMERA_EVENT_PORT:-9011}
 MANUAL_PORT=${AI_CAMERA_MANUAL_PORT:-9001}
 RESULT_PORT=${AI_CAMERA_RESULT_PORT:-9000}
+# 事件云识别策略：首次延迟、冷却、长事件刷新、结束宽限与最大重试次数。
 EVENT_CLOUD_ENABLED=${EVENT_CLOUD_ENABLED:-1}
 EVENT_INITIAL_DELAY_SECONDS=${EVENT_INITIAL_DELAY_SECONDS:-3}
 EVENT_CLOUD_COOLDOWN_SECONDS=${EVENT_CLOUD_COOLDOWN_SECONDS:-120}
@@ -187,7 +191,7 @@ child_alive() {
     fi
     local state
     state=$(ps -o stat= -p "$pid" 2>/dev/null || true)
-    case "$state" in *Z*) return 1 ;; esac
+case "$state" in *Z*) return 1 ;; esac
     return 0
 }
 

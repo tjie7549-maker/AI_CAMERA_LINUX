@@ -27,8 +27,12 @@ def write_json_atomically(path: Path, document: dict[str, Any]) -> None:
     temporary_name = ""
     try:
         with NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=path.parent,
-            prefix=path.name + ".", suffix=".tmp", delete=False,
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=path.name + ".",
+            suffix=".tmp",
+            delete=False,
         ) as temporary:
             temporary_name = temporary.name
             json.dump(document, temporary, ensure_ascii=False, separators=(",", ":"))
@@ -42,9 +46,15 @@ def write_json_atomically(path: Path, document: dict[str, Any]) -> None:
 
 
 class ManualRecognitionServer(ThreadingHTTPServer):
-    def __init__(self, address: tuple[str, int], handler: type[BaseHTTPRequestHandler],
-                 client: QwenVisionClient, result_path: Path, max_image_bytes: int,
-                 min_free_mb: int) -> None:
+    def __init__(
+        self,
+        address: tuple[str, int],
+        handler: type[BaseHTTPRequestHandler],
+        client: QwenVisionClient,
+        result_path: Path,
+        max_image_bytes: int,
+        min_free_mb: int,
+    ) -> None:
         super().__init__(address, handler)
         self.client = client
         self.result_path = result_path
@@ -74,12 +84,15 @@ class Handler(BaseHTTPRequestHandler):
         if self.path != "/health":
             self.send_json(HTTPStatus.NOT_FOUND, {"success": False, "error": "not found"})
             return
-        self.send_json(HTTPStatus.OK, {
-            "status": "ok",
-            "busy": self.server.recognize_lock.locked(),
-            "model": self.server.client.model,
-            "backend": self.server.backend,
-        })
+        self.send_json(
+            HTTPStatus.OK,
+            {
+                "status": "ok",
+                "busy": self.server.recognize_lock.locked(),
+                "model": self.server.client.model,
+                "backend": self.server.backend,
+            },
+        )
 
     def do_POST(self) -> None:
         if self.path == "/save-result":
@@ -90,7 +103,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
         if content_type != "image/jpeg":
-            self.send_json(HTTPStatus.BAD_REQUEST, {"success": False, "error": "content type must be image/jpeg"})
+            self.send_json(
+                HTTPStatus.BAD_REQUEST,
+                {"success": False, "error": "content type must be image/jpeg"},
+            )
             return
         content_length = self.headers.get("Content-Length")
         try:
@@ -98,16 +114,25 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             size = 0
         if size <= 0:
-            self.send_json(HTTPStatus.BAD_REQUEST, {"success": False, "error": "missing or invalid content length"})
+            self.send_json(
+                HTTPStatus.BAD_REQUEST,
+                {"success": False, "error": "missing or invalid content length"},
+            )
             return
         if size > self.server.max_image_bytes:
-            self.send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"success": False, "error": "image too large"})
+            self.send_json(
+                HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"success": False, "error": "image too large"}
+            )
             return
         request_source = self.headers.get("X-Recognition-Source", "manual").strip().lower()
         if request_source not in {"manual", "auto"}:
-            self.send_json(HTTPStatus.BAD_REQUEST, {
-                "success": False, "error": "invalid recognition source",
-            })
+            self.send_json(
+                HTTPStatus.BAD_REQUEST,
+                {
+                    "success": False,
+                    "error": "invalid recognition source",
+                },
+            )
             return
         request_id = self.headers.get("X-Request-Id", "").strip()
         frame_id_text = self.headers.get("X-Frame-Id", "")
@@ -119,14 +144,23 @@ class Handler(BaseHTTPRequestHandler):
             frame_id = -1
             timestamp_ns = -1
         if not request_id or frame_id < 0 or timestamp_ns < 0:
-            self.send_json(HTTPStatus.BAD_REQUEST, {"success": False, "error": "invalid request metadata"})
+            self.send_json(
+                HTTPStatus.BAD_REQUEST, {"success": False, "error": "invalid request metadata"}
+            )
             return
         image = self.rfile.read(size)
-        if len(image) != size or len(image) <= 4 or not image.startswith(b"\xff\xd8") or not image.endswith(b"\xff\xd9"):
+        if (
+            len(image) != size
+            or len(image) <= 4
+            or not image.startswith(b"\xff\xd8")
+            or not image.endswith(b"\xff\xd9")
+        ):
             self.send_json(HTTPStatus.BAD_REQUEST, {"success": False, "error": "invalid jpeg"})
             return
         if not self.server.recognize_lock.acquire(blocking=False):
-            self.send_json(HTTPStatus.TOO_MANY_REQUESTS, {"success": False, "error": "recognition busy"})
+            self.send_json(
+                HTTPStatus.TOO_MANY_REQUESTS, {"success": False, "error": "recognition busy"}
+            )
             return
 
         started = time.monotonic()
@@ -135,12 +169,17 @@ class Handler(BaseHTTPRequestHandler):
                 with open(self.server.npu_result_path, "r", encoding="utf-8") as source:
                     npu_document = json.load(source)
             except (OSError, json.JSONDecodeError):
-                self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {
-                    "type": request_source + "_result", "source": request_source,
-                    "request_id": request_id,
-                    "frame_id": frame_id, "success": False,
-                    "error": "local NPU result unavailable",
-                })
+                self.send_json(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    {
+                        "type": request_source + "_result",
+                        "source": request_source,
+                        "request_id": request_id,
+                        "frame_id": frame_id,
+                        "success": False,
+                        "error": "local NPU result unavailable",
+                    },
+                )
                 self.server.recognize_lock.release()
                 return
             document: dict[str, Any] = {
@@ -158,25 +197,51 @@ class Handler(BaseHTTPRequestHandler):
             }
             try:
                 write_json_atomically(self.server.result_path, document)
-                cache(self.server.runtime_root, request_source, request_id, image, document, {
-                    "source": request_source, "recognition_backend": "local",
-                    "request_id": request_id, "frame_id": frame_id,
-                    "frame_timestamp_ns": timestamp_ns, "created_at": document["timestamp"],
-                    "model": document.get("model"), "image_bytes": size,
-                    "image_width": None, "image_height": None,
-                    "server_latency_ms": document["server_latency_ms"],
-                })
+                cache(
+                    self.server.runtime_root,
+                    request_source,
+                    request_id,
+                    image,
+                    document,
+                    {
+                        "source": request_source,
+                        "recognition_backend": "local",
+                        "request_id": request_id,
+                        "frame_id": frame_id,
+                        "frame_timestamp_ns": timestamp_ns,
+                        "created_at": document["timestamp"],
+                        "model": document.get("model"),
+                        "image_bytes": size,
+                        "image_width": None,
+                        "image_height": None,
+                        "server_latency_ms": document["server_latency_ms"],
+                    },
+                )
             except OSError:
-                self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {
-                    "type": request_source + "_result", "source": request_source,
-                    "request_id": request_id,
-                    "frame_id": frame_id, "success": False, "error": "result write failed",
-                })
+                self.send_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {
+                        "type": request_source + "_result",
+                        "source": request_source,
+                        "request_id": request_id,
+                        "frame_id": frame_id,
+                        "success": False,
+                        "error": "result write failed",
+                    },
+                )
                 self.server.recognize_lock.release()
                 return
-            print("{} local request_id={} frame_id={} jpeg_bytes={} people={} latency_ms={}".format(
-                request_source, request_id, frame_id, size, document.get("peopleCount", 0),
-                document["server_latency_ms"]), flush=True)
+            print(
+                "{} local request_id={} frame_id={} jpeg_bytes={} people={} latency_ms={}".format(
+                    request_source,
+                    request_id,
+                    frame_id,
+                    size,
+                    document.get("peopleCount", 0),
+                    document["server_latency_ms"],
+                ),
+                flush=True,
+            )
             self.send_json(HTTPStatus.OK, document)
             self.server.recognize_lock.release()
             return
@@ -194,66 +259,129 @@ class Handler(BaseHTTPRequestHandler):
             }
             try:
                 write_json_atomically(self.server.result_path, document)
-                cache(self.server.runtime_root, request_source, request_id, image, document, {
-                    "source": request_source, "request_id": request_id, "frame_id": frame_id,
-                    "frame_timestamp_ns": timestamp_ns, "created_at": document["timestamp"],
-                    "model": document.get("model"), "image_bytes": size,
-                    "image_width": None, "image_height": None,
-                    "server_latency_ms": document["server_latency_ms"], **document.get("usage", {}),
-                })
+                cache(
+                    self.server.runtime_root,
+                    request_source,
+                    request_id,
+                    image,
+                    document,
+                    {
+                        "source": request_source,
+                        "request_id": request_id,
+                        "frame_id": frame_id,
+                        "frame_timestamp_ns": timestamp_ns,
+                        "created_at": document["timestamp"],
+                        "model": document.get("model"),
+                        "image_bytes": size,
+                        "image_width": None,
+                        "image_height": None,
+                        "server_latency_ms": document["server_latency_ms"],
+                        **document.get("usage", {}),
+                    },
+                )
             except OSError:
-                self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {
-                    "type": request_source + "_result", "source": request_source,
-                    "request_id": request_id,
-                    "frame_id": frame_id, "success": False, "error": "result write failed",
-                })
+                self.send_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {
+                        "type": request_source + "_result",
+                        "source": request_source,
+                        "request_id": request_id,
+                        "frame_id": frame_id,
+                        "success": False,
+                        "error": "result write failed",
+                    },
+                )
                 return
             status = HTTPStatus.OK if result["success"] else HTTPStatus.BAD_GATEWAY
-            print("{} request_id={} frame_id={} jpeg_bytes={} success={} latency_ms={}".format(
-                request_source, request_id, frame_id, size, result["success"],
-                document["server_latency_ms"]), flush=True)
+            print(
+                "{} request_id={} frame_id={} jpeg_bytes={} success={} latency_ms={}".format(
+                    request_source,
+                    request_id,
+                    frame_id,
+                    size,
+                    result["success"],
+                    document["server_latency_ms"],
+                ),
+                flush=True,
+            )
             self.send_json(status, document)
         except Exception as exc:
             import traceback
+
             print("recognize exception: {!r}".format(exc), file=sys.stderr, flush=True)
             traceback.print_exc()
-            self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {
-                "type": request_source + "_result", "source": request_source,
-                "request_id": request_id,
-                "frame_id": frame_id, "success": False, "error": "internal server error",
-            })
+            self.send_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                {
+                    "type": request_source + "_result",
+                    "source": request_source,
+                    "request_id": request_id,
+                    "frame_id": frame_id,
+                    "success": False,
+                    "error": "internal server error",
+                },
+            )
         finally:
             self.server.recognize_lock.release()
 
     def _save_result(self) -> None:
-        if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
-            self.send_json(HTTPStatus.BAD_REQUEST, {"success": False, "error": "content type must be application/json"}); return
+        if (
+            self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+            != "application/json"
+        ):
+            self.send_json(
+                HTTPStatus.BAD_REQUEST,
+                {"success": False, "error": "content type must be application/json"},
+            )
+            return
         try:
-            payload = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))).decode("utf-8"))
+            payload = json.loads(
+                self.rfile.read(int(self.headers.get("Content-Length", "0"))).decode("utf-8")
+            )
             source, request_id = payload.get("source", ""), payload.get("request_id", "")
             try:
                 free_mb = shutil.disk_usage(self.server.runtime_root).free / (1024 * 1024)
             except OSError:
                 free_mb = -1.0
             if 0 <= free_mb < self.server.min_free_mb:
-                self.send_json(HTTPStatus.INSUFFICIENT_STORAGE, {
-                    "success": False,
-                    "error": "disk space insufficient: {:.0f} MiB free, need {} MiB".format(
-                        free_mb, self.server.min_free_mb),
-                })
+                self.send_json(
+                    HTTPStatus.INSUFFICIENT_STORAGE,
+                    {
+                        "success": False,
+                        "error": "disk space insufficient: {:.0f} MiB free, need {} MiB".format(
+                            free_mb, self.server.min_free_mb
+                        ),
+                    },
+                )
                 return
             relative, already = save(self.server.runtime_root, source, request_id)
-            self.send_json(HTTPStatus.OK, {"success": True, "source": source, "request_id": request_id,
-                "saved_relative_path": relative, "already_saved": already})
+            self.send_json(
+                HTTPStatus.OK,
+                {
+                    "success": True,
+                    "source": source,
+                    "request_id": request_id,
+                    "saved_relative_path": relative,
+                    "already_saved": already,
+                },
+            )
         except FileNotFoundError:
-            self.send_json(HTTPStatus.NOT_FOUND, {"success": False, "error": "cached result not found"})
+            self.send_json(
+                HTTPStatus.NOT_FOUND, {"success": False, "error": "cached result not found"}
+            )
         except (ValueError, json.JSONDecodeError):
-            self.send_json(HTTPStatus.BAD_REQUEST, {"success": False, "error": "invalid save request"})
+            self.send_json(
+                HTTPStatus.BAD_REQUEST, {"success": False, "error": "invalid save request"}
+            )
         except OSError:
-            self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"success": False, "error": "save failed"})
+            self.send_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR, {"success": False, "error": "save failed"}
+            )
 
     def do_PUT(self) -> None:
-        self.send_json(HTTPStatus.METHOD_NOT_ALLOWED, {"success": False, "error": "method not allowed"})
+        self.send_json(
+            HTTPStatus.METHOD_NOT_ALLOWED, {"success": False, "error": "method not allowed"}
+        )
 
     def do_DELETE(self) -> None:
         self.do_PUT()
@@ -266,28 +394,50 @@ def main() -> int:
     parser.add_argument("--max-image-bytes", type=int, default=1048576)
     parser.add_argument("--result-path", type=Path, default=Path("/tmp/ai_cam/latest_result.json"))
     parser.add_argument("--model", default=os.environ.get("QWEN_MODEL", "qwen3-vl-flash"))
-    parser.add_argument("--min-free-mb", type=int, default=1024,
-                        help="Minimum free disk MiB required for save-result")
-    parser.add_argument("--backend", choices=["cloud", "local"],
-                        default=os.environ.get("AI_BACKEND", "cloud"),
-                        help="cloud: call Qwen; local: use on-device NPU result")
-    parser.add_argument("--npu-result", type=Path,
-                        default=Path(os.environ.get(
-                            "NPU_RESULT_PATH",
-                            "/home/radxa/AI_CAMERA_LINUX/rock2a_receiver/runtime/npu_latest.json")))
+    parser.add_argument(
+        "--min-free-mb",
+        type=int,
+        default=1024,
+        help="Minimum free disk MiB required for save-result",
+    )
+    parser.add_argument(
+        "--backend",
+        choices=["cloud", "local"],
+        default=os.environ.get("AI_BACKEND", "cloud"),
+        help="cloud: call Qwen; local: use on-device NPU result",
+    )
+    parser.add_argument(
+        "--npu-result",
+        type=Path,
+        default=Path(
+            os.environ.get(
+                "NPU_RESULT_PATH",
+                "/home/radxa/AI_CAMERA_LINUX/rock2a_receiver/runtime/npu_latest.json",
+            )
+        ),
+    )
     args = parser.parse_args()
     if not 1 <= args.port <= 65535 or args.max_image_bytes <= 4 or args.min_free_mb < 0:
         parser.error("invalid port/max image size/min free")
 
     load_qwen_env()
     os.environ["QWEN_MODEL"] = args.model
-    server = ManualRecognitionServer((args.host, args.port), Handler,
-                                     QwenVisionClient(), args.result_path,
-                                     args.max_image_bytes, args.min_free_mb)
+    server = ManualRecognitionServer(
+        (args.host, args.port),
+        Handler,
+        QwenVisionClient(),
+        args.result_path,
+        args.max_image_bytes,
+        args.min_free_mb,
+    )
     server.backend = args.backend
     server.npu_result_path = args.npu_result
-    print("Interactive recognition listening on {}:{} (backend={}, min-free {} MiB)".format(
-        args.host, args.port, args.backend, args.min_free_mb), flush=True)
+    print(
+        "Interactive recognition listening on {}:{} (backend={}, min-free {} MiB)".format(
+            args.host, args.port, args.backend, args.min_free_mb
+        ),
+        flush=True,
+    )
     try:
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:

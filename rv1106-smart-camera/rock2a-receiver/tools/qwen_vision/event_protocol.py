@@ -1,4 +1,8 @@
-"""Versioned, defensive wire protocol for local detections and event messages."""
+"""本地检测与事件消息的带版本防御性协议。
+
+所有进入事件引擎的数据先在这里做字段类型、尺寸、轨迹数量和相机标识校验，
+避免不可信网络输入污染内部状态。
+"""
 
 from __future__ import annotations
 
@@ -6,10 +10,10 @@ import time
 import re
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 1  # 协议版本；升级字段语义时必须同步调整消费者。
 CAMERA_ID_DEFAULT = "rv1106-01"
-MAX_MESSAGE_BYTES = 65536
-MAX_TRACKS = 64
+MAX_MESSAGE_BYTES = 65536  # 单条网络消息上限，防止内存被异常输入占满。
+MAX_TRACKS = 64  # 一帧最多接受的轨迹数。
 CAMERA_ID_RE = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 
 
@@ -61,7 +65,10 @@ def normalize_detection(message: Any, now_ms: int | None = None) -> dict[str, An
     """Accept schema v1 or legacy peopleCount NPU messages without trusting extras."""
     if not isinstance(message, dict):
         return None
-    if message.get("type") not in {None, "npu"} and message.get("message_type") not in {"detection", "track.update"}:
+    if message.get("type") not in {None, "npu"} and message.get("message_type") not in {
+        "detection",
+        "track.update",
+    }:
         return None
     now_ms = int(time.time() * 1000) if now_ms is None else now_ms
     schema_version = _integer(message.get("schema_version"), 0)
@@ -84,20 +91,31 @@ def normalize_detection(message: Any, now_ms: int | None = None) -> dict[str, An
         "camera_id": camera_id,
         "source": "local_npu",
         "frame_id": _integer(message.get("frame_id")),
-        "captured_at_ms": _integer(message.get("captured_at_ms", message.get("timestamp", now_ms)), now_ms),
+        "captured_at_ms": _integer(
+            message.get("captured_at_ms", message.get("timestamp", now_ms)), now_ms
+        ),
         "produced_at_ms": _integer(message.get("produced_at_ms", now_ms), now_ms),
         "received_at_ms": _integer(message.get("received_at_ms", now_ms), now_ms),
         "tracks": tracks,
         "people_count": people,
-        "sentinel_active": bool(message.get("sentinelActive", message.get("sentinel_active", False))),
+        "sentinel_active": bool(
+            message.get("sentinelActive", message.get("sentinel_active", False))
+        ),
         "display_awake": bool(message.get("displayAwake", message.get("display_awake", False))),
         "latency_ms": _number(message.get("latencyMs", message.get("latency_ms", 0))),
         "legacy": schema_version == 0,
     }
 
 
-def envelope(message_type: str, camera_id: str, *, source: str = "local_npu",
-             frame_id: int = 0, captured_at_ms: int = 0, **extra: Any) -> dict[str, Any]:
+def envelope(
+    message_type: str,
+    camera_id: str,
+    *,
+    source: str = "local_npu",
+    frame_id: int = 0,
+    captured_at_ms: int = 0,
+    **extra: Any,
+) -> dict[str, Any]:
     now = int(time.time() * 1000)
     return {
         "schema_version": SCHEMA_VERSION,

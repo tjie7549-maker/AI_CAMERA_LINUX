@@ -19,7 +19,6 @@ from qwen_vision_client import QwenVisionClient
 from test_fixed_image import load_qwen_env
 from result_cache import cache, save
 
-
 STOP_REQUESTED = False
 
 
@@ -250,19 +249,26 @@ def main() -> int:
             }
             try:
                 write_json_atomically(result_path, document)
-                cache(runtime_root, "auto", request_name, image_bytes, document, {
-                    "source": "auto",
-                    "request_id": request_name,
-                    "frame_id": None,
-                    "frame_timestamp_ns": None,
-                    "created_at": document["timestamp"],
-                    "model": result.get("model"),
-                    "image_bytes": len(image_bytes),
-                    "image_width": None,
-                    "image_height": None,
-                    "server_latency_ms": result.get("latency_ms"),
-                    **result.get("usage", {}),
-                })
+                cache(
+                    runtime_root,
+                    "auto",
+                    request_name,
+                    image_bytes,
+                    document,
+                    {
+                        "source": "auto",
+                        "request_id": request_name,
+                        "frame_id": None,
+                        "frame_timestamp_ns": None,
+                        "created_at": document["timestamp"],
+                        "model": result.get("model"),
+                        "image_bytes": len(image_bytes),
+                        "image_width": None,
+                        "image_height": None,
+                        "server_latency_ms": result.get("latency_ms"),
+                        **result.get("usage", {}),
+                    },
+                )
             except OSError:
                 print("request_id={} result_write_error".format(request_id), flush=True)
             print_request(request_id, fingerprint, result)
@@ -305,12 +311,19 @@ def main() -> int:
                                 flush=True,
                             )
                         else:
-                            if args.auto_save_policy == "warning" and not document.get("result", {}).get("warning"):
-                                print("auto-save skipped: policy=warning and warning=false", flush=True)
+                            if args.auto_save_policy == "warning" and not document.get(
+                                "result", {}
+                            ).get("warning"):
+                                print(
+                                    "auto-save skipped: policy=warning and warning=false",
+                                    flush=True,
+                                )
                             else:
                                 relative, _ = save(runtime_root, "auto", request_name)
                                 save_dedup_state(dedup_path, key)
-                                print("auto-saved {} -> {}".format(request_name, relative), flush=True)
+                                print(
+                                    "auto-saved {} -> {}".format(request_name, relative), flush=True
+                                )
                 except Exception as exc:
                     print("auto-save error: {}".format(exc), flush=True)
         time.sleep(min(0.2, interval_seconds))

@@ -1,15 +1,15 @@
 #ifndef PREVIEW_SHM_READER_H
 #define PREVIEW_SHM_READER_H
 
-#include <QObject>
 #include <QImage>
+#include <QObject>
 
 class QTimer;
 
 class PreviewShmReader : public QObject {
     Q_OBJECT
 
-public:
+   public:
     enum State {
         Offline = 0,
         Stale = 1,
@@ -22,15 +22,15 @@ public:
     void start();
     void stop();
 
-signals:
+   signals:
     void frameReady(const QImage &image, qulonglong frameId, qulonglong sourceTimeNs);
     void stateChanged(int state);
     void statsChanged(const QString &line1, const QString &line2);
 
-private slots:
+   private slots:
     void poll();
 
-private:
+   private:
     bool openMapping();
     bool receiveBufferFds();
     void closeMapping();

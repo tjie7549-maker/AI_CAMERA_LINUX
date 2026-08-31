@@ -10,6 +10,6 @@ SERVER_PORT=${NPU_SERVER_PORT:-9010}
 INTERVAL_MS=${NPU_INTERVAL_MS:-300}
 
 exec env LD_LIBRARY_PATH="$NPU_DIR" "$NPU_BIN" \
-  --model "$NPU_MODEL" --server-ip "$SERVER_IP" \
-  --port "$SERVER_PORT" --interval-ms "$INTERVAL_MS" \
-  >>"$NPU_LOG" 2>&1
+    --model "$NPU_MODEL" --server-ip "$SERVER_IP" \
+    --port "$SERVER_PORT" --interval-ms "$INTERVAL_MS" \
+    >>"$NPU_LOG" 2>&1

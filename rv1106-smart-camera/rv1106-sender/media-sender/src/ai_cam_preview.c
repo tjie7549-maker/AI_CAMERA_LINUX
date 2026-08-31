@@ -1,6 +1,11 @@
 #include <errno.h>
+
+/* Qt/NPU 预览生产端：从 VPSS 取 NV12 帧，经 RGA 转为 RGB DMA-BUF，
+ * 用双缓冲和 sequence
+ * 顺序锁发布元数据，再用 SCM_RIGHTS 发放缓冲区 FD。 */
 #include <fcntl.h>
 #include <poll.h>
+#include <rga/im2d.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
@@ -9,8 +14,6 @@
 #include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
-
-#include <rga/im2d.h>
 
 #include "ai_cam.h"
 #include "preview_shm_protocol.h"
@@ -120,8 +123,8 @@ static void *ai_cam_preview_frames(void *arg) {
         int ret;
 
         memset(&frame, 0, sizeof(frame));
-        ret = RK_MPI_VPSS_GetChnFrame(AI_CAM_VPSS_GRP, AI_CAM_VPSS_PREVIEW_CHN,
-                                      &frame, AI_CAM_PREVIEW_WAIT_MS);
+        ret = RK_MPI_VPSS_GetChnFrame(AI_CAM_VPSS_GRP, AI_CAM_VPSS_PREVIEW_CHN, &frame,
+                                      AI_CAM_PREVIEW_WAIT_MS);
         if (ret != RK_SUCCESS)
             continue;
 
@@ -137,8 +140,7 @@ static void *ai_cam_preview_frames(void *arg) {
             next_convert_ns += frame_interval_ns;
         } while (next_convert_ns <= now_ns);
 
-        active_index = 1U - __atomic_load_n(&app->preview_header->active_index,
-                                             __ATOMIC_RELAXED);
+        active_index = 1U - __atomic_load_n(&app->preview_header->active_index, __ATOMIC_RELAXED);
         source_fd = RK_MPI_MB_Handle2Fd(frame.stVFrame.pMbBlk);
         if (source_fd < 0) {
             RK_LOGE("preview RK_MPI_MB_Handle2Fd failed: %d", source_fd);
@@ -146,19 +148,14 @@ static void *ai_cam_preview_frames(void *arg) {
             goto release_frame;
         }
 
-        source = wrapbuffer_fd_t(source_fd, frame.stVFrame.u32Width,
-                                 frame.stVFrame.u32Height,
-                                 frame.stVFrame.u32VirWidth,
-                                 frame.stVFrame.u32VirHeight,
+        source = wrapbuffer_fd_t(source_fd, frame.stVFrame.u32Width, frame.stVFrame.u32Height,
+                                 frame.stVFrame.u32VirWidth, frame.stVFrame.u32VirHeight,
                                  RK_FORMAT_YCbCr_420_SP);
-        target = wrapbuffer_fd_t(app->preview_block_fds[active_index],
-                                 app->config.preview_width,
-                                 app->config.preview_height,
-                                 app->config.preview_width,
-                                 app->config.preview_height,
-                                 RK_FORMAT_RGB_888);
-        rga_ret = imcvtcolor_t(source, target, RK_FORMAT_YCbCr_420_SP,
-                               RK_FORMAT_RGB_888, IM_YUV_TO_RGB_BT601_LIMIT, 1);
+        target = wrapbuffer_fd_t(app->preview_block_fds[active_index], app->config.preview_width,
+                                 app->config.preview_height, app->config.preview_width,
+                                 app->config.preview_height, RK_FORMAT_RGB_888);
+        rga_ret = imcvtcolor_t(source, target, RK_FORMAT_YCbCr_420_SP, RK_FORMAT_RGB_888,
+                               IM_YUV_TO_RGB_BT601_LIMIT, 1);
         if (rga_ret != IM_STATUS_SUCCESS) {
             RK_LOGE("preview RGA NV12->RGB888 failed: %s", imStrError_t(rga_ret));
             stat_failures++;
@@ -173,16 +170,15 @@ static void *ai_cam_preview_frames(void *arg) {
         ai_cam_preview_publish(app, ++frame_id, now_ns, active_index);
         stat_frames++;
 
-release_frame:
-        RK_MPI_VPSS_ReleaseChnFrame(AI_CAM_VPSS_GRP, AI_CAM_VPSS_PREVIEW_CHN,
-                                    &frame);
+    release_frame:
+        RK_MPI_VPSS_ReleaseChnFrame(AI_CAM_VPSS_GRP, AI_CAM_VPSS_PREVIEW_CHN, &frame);
         now_ns = ai_cam_preview_now_ns();
         if (now_ns - stat_start_ns >= 1000000000ULL) {
             double seconds = (double)(now_ns - stat_start_ns) / 1000000000.0;
 
             printf("#Stats: Preview %dx%d RGB888 FPS=%.2f, frame=%llu, rga_errors=%u\n",
-                   app->config.preview_width, app->config.preview_height,
-                   stat_frames / seconds, (unsigned long long)frame_id, stat_failures);
+                   app->config.preview_width, app->config.preview_height, stat_frames / seconds,
+                   (unsigned long long)frame_id, stat_failures);
             fflush(stdout);
             stat_start_ns = now_ns;
             stat_frames = 0;
@@ -307,8 +303,8 @@ int ai_cam_preview_start(AiCamApp *app) {
     }
     app->preview_fd_thread_started = true;
     printf("#Preview: VPSS ch%d NV12 -> RGA RGB888 DMA-BUF -> shm metadata %s (%dx%d)\n",
-           AI_CAM_VPSS_PREVIEW_CHN, app->config.preview_shm_name,
-           app->config.preview_width, app->config.preview_height);
+           AI_CAM_VPSS_PREVIEW_CHN, app->config.preview_shm_name, app->config.preview_width,
+           app->config.preview_height);
     return RK_SUCCESS;
 
 failed:

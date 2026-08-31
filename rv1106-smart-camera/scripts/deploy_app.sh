@@ -8,21 +8,21 @@ build_dir=${BUILD_DIR:-$project_dir/build}
 board_ip=${BOARD_IP:-} user=${BOARD_USER:-root} dry_run=false install_autostart=false
 config_file=${CONFIG_FILE:-$project_dir/configs/config.json}
 while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --env) shift; [ "$#" -gt 0 ] || usage; . "$1"; board_ip=${BOARD_IP:-$board_ip}; user=${BOARD_USER:-$user}; config_file=${CONFIG_FILE:-$config_file} ;;
-    --ip) shift; [ "$#" -gt 0 ] || usage; board_ip=$1 ;;
-    --user) shift; [ "$#" -gt 0 ] || usage; user=$1 ;;
-    --config) shift; [ "$#" -gt 0 ] || usage; config_file=$1 ;;
-    --install-autostart) install_autostart=true ;;
-    --dry-run) dry_run=true ;;
-    *) usage ;;
-  esac
-  shift
+    case "$1" in
+        --env) shift; [ "$#" -gt 0 ] || usage; . "$1"; board_ip=${BOARD_IP:-$board_ip}; user=${BOARD_USER:-$user}; config_file=${CONFIG_FILE:-$config_file} ;;
+        --ip) shift; [ "$#" -gt 0 ] || usage; board_ip=$1 ;;
+        --user) shift; [ "$#" -gt 0 ] || usage; user=$1 ;;
+        --config) shift; [ "$#" -gt 0 ] || usage; config_file=$1 ;;
+        --install-autostart) install_autostart=true ;;
+        --dry-run) dry_run=true ;;
+        *) usage ;;
+    esac
+    shift
 done
 [ -n "$board_ip" ] || usage
 font_file=$project_dir/rv1106-sender/qt-console/fonts/DroidSansFallbackFull.ttf
 for f in "$build_dir/bin/media-sender" "$build_dir/bin/camera-daemon" "$build_dir/bin/rv1106_ai_ui" "$font_file" "$config_file" "$project_dir/scripts/run_demo.sh" "$project_dir/scripts/start.sh" "$project_dir/scripts/stress_test.sh" "$project_dir/scripts/autostart_service.sh" "$project_dir/scripts/autostart_ctl.sh" "$project_dir/scripts/init/S99rv1106-smart-camera"; do
-  [ -f "$f" ] || { echo "Missing build/deploy input: $f; run build_app.sh first" >&2; exit 3; }
+    [ -f "$f" ] || { echo "Missing build/deploy input: $f; run build_app.sh first" >&2; exit 3; }
 done
 echo "Target: $user@$board_ip:/userdata/rv1106-smart-camera"
 echo "Files (no remote deletion):"
@@ -35,11 +35,11 @@ scp "$config_file" "$user@$board_ip:/userdata/rv1106-smart-camera/config.json"
 scp "$project_dir/scripts/run_demo.sh" "$project_dir/scripts/start.sh" "$project_dir/scripts/stress_test.sh" "$project_dir/scripts/autostart_service.sh" "$project_dir/scripts/autostart_ctl.sh" "$user@$board_ip:/userdata/rv1106-smart-camera/scripts/"
 ssh "$user@$board_ip" 'chmod 755 /userdata/rv1106-smart-camera/bin/media-sender /userdata/rv1106-smart-camera/bin/camera-daemon /userdata/rv1106-smart-camera/bin/rv1106_ai_ui /userdata/rv1106-smart-camera/scripts/run_demo.sh /userdata/rv1106-smart-camera/scripts/start.sh /userdata/rv1106-smart-camera/scripts/stress_test.sh /userdata/rv1106-smart-camera/scripts/autostart_service.sh /userdata/rv1106-smart-camera/scripts/autostart_ctl.sh'
 if [ "$install_autostart" = true ]; then
-  scp "$project_dir/scripts/init/S99rv1106-smart-camera" "$user@$board_ip:/oem/usr/etc/init.d/S99rv1106-smart-camera"
-  ssh "$user@$board_ip" 'chmod 755 /oem/usr/etc/init.d/S99rv1106-smart-camera'
+    scp "$project_dir/scripts/init/S99rv1106-smart-camera" "$user@$board_ip:/oem/usr/etc/init.d/S99rv1106-smart-camera"
+    ssh "$user@$board_ip" 'chmod 755 /oem/usr/etc/init.d/S99rv1106-smart-camera'
 fi
 if [ "$install_autostart" = true ]; then
-  echo "Deploy completed. Current-project boot entry installed in /oem/usr/etc/init.d/; no existing AI-project file was modified."
+    echo "Deploy completed. Current-project boot entry installed in /oem/usr/etc/init.d/; no existing AI-project file was modified."
 else
-  echo "Deploy completed. No system directory and no existing AI-project file was modified."
+    echo "Deploy completed. No system directory and no existing AI-project file was modified."
 fi
